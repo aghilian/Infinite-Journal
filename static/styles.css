@@ -8,6 +8,19 @@
   --accent: #1f6f68;
   --accent-dark: #164f4a;
   --danger: #a63434;
+  --mode-soft: #edf4f2;
+  --mode-line: #cbded9;
+  --mode-panel: #fbfaf7;
+}
+
+body[data-context="work"] {
+  --surface: #eef2f7;
+  --paper: #ffffff;
+  --accent: #315b8c;
+  --accent-dark: #233f63;
+  --mode-soft: #e7eef8;
+  --mode-line: #bfd0e7;
+  --mode-panel: #f8fafc;
 }
 
 * {
@@ -121,7 +134,7 @@ select {
   justify-content: space-between;
   gap: 20px;
   padding: 18px clamp(18px, 5vw, 64px);
-  background: rgba(245, 243, 239, 0.92);
+  background: color-mix(in srgb, var(--surface) 92%, white);
   border-bottom: 1px solid rgba(217, 221, 227, 0.8);
   backdrop-filter: blur(12px);
 }
@@ -137,6 +150,33 @@ select {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.context-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: 220px;
+  padding: 4px;
+  background: var(--mode-soft);
+  border: 1px solid var(--mode-line);
+  border-radius: 999px;
+}
+
+.context-option {
+  min-height: 38px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--accent-dark);
+  border-radius: 999px;
+}
+
+.context-option:hover {
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.context-option.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .save-state {
@@ -163,7 +203,7 @@ select {
   grid-template-columns: minmax(220px, 1fr) minmax(220px, auto) minmax(360px, auto);
   gap: 10px;
   padding: 12px clamp(18px, 5vw, 64px);
-  background: #fbfaf7;
+  background: var(--mode-panel);
   border-bottom: 1px solid var(--line);
 }
 
@@ -237,7 +277,17 @@ select {
   min-height: calc(100vh - 152px);
   padding: clamp(18px, 5vw, 64px);
   background: var(--paper);
+  border-top: 5px solid var(--accent);
   border-bottom: 1px solid var(--line);
+}
+
+.context-label {
+  width: min(980px, 100%);
+  margin: 0 auto 12px;
+  color: var(--accent-dark);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.78rem;
 }
 
 .tag-row {
@@ -332,15 +382,15 @@ select {
 .tag-chip {
   min-height: 28px;
   padding: 0 10px;
-  background: #edf4f2;
+  background: var(--mode-soft);
   color: var(--accent-dark);
-  border: 1px solid #cbded9;
+  border: 1px solid var(--mode-line);
   border-radius: 999px;
   font-size: 0.85rem;
 }
 
 .tag-chip:hover {
-  background: #dfeeea;
+  background: var(--mode-line);
 }
 
 .note-content {
@@ -408,6 +458,10 @@ dialog::backdrop {
 
   .top-actions {
     justify-content: flex-start;
+  }
+
+  .context-switch {
+    width: min(100%, 280px);
   }
 
   .save-state {

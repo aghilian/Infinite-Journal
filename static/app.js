@@ -8,6 +8,9 @@ const saveState = document.querySelector("#saveState");
 const olderNotes = document.querySelector("#olderNotes");
 const logoutButton = document.querySelector("#logoutButton");
 const settingsButton = document.querySelector("#settingsButton");
+const personalMode = document.querySelector("#personalMode");
+const workMode = document.querySelector("#workMode");
+const contextLabel = document.querySelector("#contextLabel");
 const toolbar = document.querySelector(".editor-toolbar");
 const imageButton = document.querySelector("#imageButton");
 const imageInput = document.querySelector("#imageInput");
@@ -37,6 +40,7 @@ const backupStatus = document.querySelector("#backupStatus");
 let saveTimer = null;
 let lastSavedContent = "";
 let saving = false;
+let activeContext = localStorage.getItem("journalContext") || "personal";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -79,6 +83,15 @@ function showLogin() {
 function showJournal() {
   loginView.hidden = true;
   journalView.hidden = false;
+}
+
+function setTheme(context) {
+  activeContext = context === "work" ? "work" : "personal";
+  localStorage.setItem("journalContext", activeContext);
+  document.body.dataset.context = activeContext;
+  personalMode.classList.toggle("active", activeContext === "personal");
+  workMode.classList.toggle("active", activeContext === "work");
+  contextLabel.textContent = activeContext === "work" ? "Work Journal" : "Personal Journal";
 }
 
 function renderOlder(notes) {
@@ -139,7 +152,7 @@ function renderResults(title, results) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "result-row";
-    button.addEventListener("click", () => showSelectedNote(result.note_date));
+    button.addEventListener("click", () => showSelectedNote(result.note_date, result.context || activeContext));
     const date = document.createElement("strong");
     date.textContent = formatDate(result.note_date);
     const snippet = document.createElement("span");
@@ -150,8 +163,8 @@ function renderResults(title, results) {
   resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-async function showSelectedNote(date) {
-  const data = await api(`/api/note?date=${encodeURIComponent(date)}`);
+async function showSelectedNote(date, context = activeContext) {
+  const data = await api(`/api/note?date=${encodeURIComponent(date)}&context=${encodeURIComponent(context)}`);
   const note = data.note;
   resultsPanel.hidden = false;
   resultsTitle.textContent = formatDate(note.note_date);
@@ -186,7 +199,8 @@ function placeCursorAtEnd() {
 }
 
 async function loadJournal() {
-  const data = await api("/api/journal");
+  setTheme(activeContext);
+  const data = await api(`/api/journal?context=${encodeURIComponent(activeContext)}`);
   todayTitle.textContent = formatDate(data.today.date);
   todayEditor.innerHTML = normalizeStoredContent(data.today.content || "");
   todayTags.value = data.today.tags || "";
@@ -207,7 +221,7 @@ async function saveToday() {
   try {
     await api("/api/journal/today", {
       method: "POST",
-      body: JSON.stringify({ content: currentContent, tags: currentTags }),
+      body: JSON.stringify({ content: currentContent, tags: currentTags, context: activeContext }),
     });
     lastSavedContent = currentContent;
     todayTags.dataset.saved = currentTags;
@@ -302,22 +316,22 @@ toolbar.addEventListener("click", (event) => {
 });
 
 async function searchByTag(tag) {
-  const data = await api(`/api/search?tag=${encodeURIComponent(tag)}`);
-  renderResults(`Tag: ${tag}`, data.results || []);
+  const data = await api(`/api/search?tag=${encodeURIComponent(tag)}&context=${encodeURIComponent(activeContext)}`);
+  renderResults(`${activeContext === "work" ? "Work" : "Personal"} tag: ${tag}`, data.results || []);
 }
 
 searchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = searchInput.value.trim();
   if (query.length < 2) return;
-  const data = await api(`/api/search?q=${encodeURIComponent(query)}`);
-  renderResults(`Search: ${query}`, data.results || []);
+  const data = await api(`/api/search?q=${encodeURIComponent(query)}&context=${encodeURIComponent(activeContext)}`);
+  renderResults(`${activeContext === "work" ? "Work" : "Personal"} search: ${query}`, data.results || []);
 });
 
 jumpForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!jumpDate.value) return;
-  await showSelectedNote(jumpDate.value);
+  await showSelectedNote(jumpDate.value, activeContext);
 });
 
 exportForm.addEventListener("submit", (event) => {
@@ -326,12 +340,24 @@ exportForm.addEventListener("submit", (event) => {
   if (exportFrom.value) params.set("from", exportFrom.value);
   if (exportTo.value) params.set("to", exportTo.value);
   params.set("format", exportFormat.value);
+  params.set("context", activeContext);
   window.location.href = `/api/export?${params.toString()}`;
 });
 
 clearResults.addEventListener("click", () => {
   resultsPanel.hidden = true;
   resultsList.textContent = "";
+});
+
+document.querySelectorAll(".context-option").forEach((button) => {
+  button.addEventListener("click", async () => {
+    if (button.dataset.context === activeContext) return;
+    await saveToday();
+    activeContext = button.dataset.context;
+    resultsPanel.hidden = true;
+    resultsList.textContent = "";
+    await loadJournal();
+  });
 });
 
 imageButton.addEventListener("click", () => imageInput.click());
@@ -423,6 +449,7 @@ restoreBackupInput.addEventListener("change", async () => {
 });
 
 (async function boot() {
+  setTheme(activeContext);
   try {
     const me = await api("/api/me");
     if (me.authenticated) {

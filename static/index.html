@@ -31,6 +31,10 @@
           <h1 id="todayTitle">Today</h1>
         </div>
         <div class="top-actions">
+          <div class="context-switch" role="group" aria-label="Journal context">
+            <button id="personalMode" class="context-option" type="button" data-context="personal">Personal</button>
+            <button id="workMode" class="context-option" type="button" data-context="work">Work</button>
+          </div>
           <span id="saveState" class="save-state">Saved</span>
           <button id="settingsButton" class="ghost" type="button">Password</button>
           <button id="logoutButton" class="ghost" type="button">Sign out</button>
@@ -88,6 +92,7 @@
       </section>
 
       <section class="today-sheet" aria-label="Today's journal">
+        <p id="contextLabel" class="context-label">Personal Journal</p>
         <label class="tag-row">
           Tags
           <input id="todayTags" placeholder="health, work, idea" />

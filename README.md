@@ -18,6 +18,7 @@ Phase 1 private daily journaling app.
 - Downloadable and server-side zip backups.
 - Restore notes and images from a backup zip.
 - Security headers, session cleanup, and login throttling.
+- Personal and Work contexts with distinct themes and filtered note history.
 
 ## Local Run
 

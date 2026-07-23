@@ -60,6 +60,7 @@ ALLOWED_TAGS = {
 }
 VOID_TAGS = {"br", "img"}
 LOGIN_ATTEMPTS = {}
+CONTEXTS = {"personal", "work"}
 
 
 def utc_now():
@@ -162,6 +163,13 @@ def normalize_tags(tags):
     return ", ".join(cleaned[:20])
 
 
+def normalize_context(value):
+    context = str(value or "personal").strip().lower()
+    if context not in CONTEXTS:
+        raise ValueError("Invalid context")
+    return context
+
+
 def validate_date(value):
     try:
         datetime.strptime(value, "%Y-%m-%d")
@@ -173,7 +181,7 @@ def validate_date(value):
 def note_to_markdown(row):
     tags = row["tags"] or ""
     body = note_text(row["content"] or "")
-    lines = [f"# {row['note_date']}", ""]
+    lines = [f"# {row['note_date']} - {row['context'].title()}", ""]
     if tags:
         lines.extend([f"Tags: {tags}", ""])
     lines.append(body)
@@ -185,7 +193,7 @@ def backup_payload():
         notes = [
             dict(row)
             for row in conn.execute(
-                "SELECT note_date, content, tags, updated_at FROM notes ORDER BY note_date ASC"
+                "SELECT note_date, context, content, tags, updated_at FROM notes ORDER BY note_date ASC, context ASC"
             ).fetchall()
         ]
     return {
@@ -257,17 +265,18 @@ def import_backup(raw):
                 note_date = validate_date(note.get("note_date"))
                 content = sanitize_note(str(note.get("content") or ""))
                 tags = normalize_tags(note.get("tags") or "")
+                context = normalize_context(note.get("context") or "personal")
                 updated_at = str(note.get("updated_at") or utc_now().isoformat())
                 conn.execute(
                     """
-                    INSERT INTO notes (note_date, content, tags, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(note_date) DO UPDATE SET
+                    INSERT INTO notes (note_date, context, content, tags, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(note_date, context) DO UPDATE SET
                         content = excluded.content,
                         tags = excluded.tags,
                         updated_at = excluded.updated_at
                     """,
-                    (note_date, content, tags, updated_at),
+                    (note_date, context, content, tags, updated_at),
                 )
                 restored_notes += 1
     return {"notes": restored_notes, "assets": restored_assets}
@@ -303,6 +312,7 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS notes (
                 note_date TEXT PRIMARY KEY,
+                context TEXT NOT NULL DEFAULT 'personal',
                 content TEXT NOT NULL DEFAULT '',
                 tags TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
@@ -312,6 +322,42 @@ def init_db():
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(notes)").fetchall()}
         if "tags" not in columns:
             conn.execute("ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+            columns.add("tags")
+        if "context" not in columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN context TEXT NOT NULL DEFAULT 'personal'")
+            columns.add("context")
+        indexes = {row["name"] for row in conn.execute("PRAGMA index_list(notes)").fetchall()}
+        if "idx_notes_date_context" not in indexes:
+            rows = conn.execute("SELECT note_date, context, content, tags, updated_at FROM notes").fetchall()
+            conn.execute("ALTER TABLE notes RENAME TO notes_legacy")
+            conn.execute(
+                """
+                CREATE TABLE notes (
+                    note_date TEXT NOT NULL,
+                    context TEXT NOT NULL DEFAULT 'personal',
+                    content TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (note_date, context)
+                )
+                """
+            )
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO notes (note_date, context, content, tags, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["note_date"],
+                        normalize_context(row["context"] or "personal"),
+                        row["content"] or "",
+                        row["tags"] or "",
+                        row["updated_at"],
+                    ),
+                )
+            conn.execute("DROP TABLE notes_legacy")
+            conn.execute("CREATE INDEX idx_notes_date_context ON notes (note_date, context)")
         user_count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
         if user_count == 0:
             username = os.environ.get("THEJOURNAL_USER", "admin")
@@ -607,23 +653,29 @@ class JournalHandler(BaseHTTPRequestHandler):
 
     def get_journal(self):
         current_day = today_key()
+        query = parse_qs(urlparse(self.path).query)
+        context = normalize_context((query.get("context") or ["personal"])[0])
         with db() as conn:
-            today = conn.execute("SELECT * FROM notes WHERE note_date = ?", (current_day,)).fetchone()
+            today = conn.execute(
+                "SELECT * FROM notes WHERE note_date = ? AND context = ?",
+                (current_day, context),
+            ).fetchone()
             older = conn.execute(
                 """
-                SELECT note_date, content, tags, updated_at
+                SELECT note_date, context, content, tags, updated_at
                 FROM notes
-                WHERE note_date < ? AND length(trim(content)) > 0
+                WHERE note_date < ? AND context = ? AND length(trim(content)) > 0
                 ORDER BY note_date DESC
                 LIMIT 60
                 """,
-                (current_day,),
+                (current_day, context),
             ).fetchall()
         self.send_json(
             {
                 "appName": APP_NAME,
                 "today": {
                     "date": current_day,
+                    "context": context,
                     "content": today["content"] if today else "",
                     "tags": today["tags"] if today else "",
                     "updatedAt": today["updated_at"] if today else None,
@@ -636,48 +688,52 @@ class JournalHandler(BaseHTTPRequestHandler):
         payload = self.read_json()
         content = sanitize_note(str(payload.get("content", "")))
         tags = normalize_tags(payload.get("tags", ""))
+        context = normalize_context(payload.get("context", "personal"))
         current_day = today_key()
         updated_at = utc_now().isoformat()
         with db() as conn:
             conn.execute(
                 """
-                INSERT INTO notes (note_date, content, tags, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(note_date) DO UPDATE SET
+                INSERT INTO notes (note_date, context, content, tags, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(note_date, context) DO UPDATE SET
                     content = excluded.content,
                     tags = excluded.tags,
                     updated_at = excluded.updated_at
                 """,
-                (current_day, content, tags, updated_at),
+                (current_day, context, content, tags, updated_at),
             )
         self.send_json({"ok": True, "date": current_day, "updatedAt": updated_at})
 
     def get_note(self):
         query = parse_qs(urlparse(self.path).query)
         note_date = validate_date((query.get("date") or [""])[0])
+        context = normalize_context((query.get("context") or ["personal"])[0])
         with db() as conn:
             row = conn.execute(
-                "SELECT note_date, content, tags, updated_at FROM notes WHERE note_date = ?",
-                (note_date,),
+                "SELECT note_date, context, content, tags, updated_at FROM notes WHERE note_date = ? AND context = ?",
+                (note_date, context),
             ).fetchone()
-        self.send_json({"note": dict(row) if row else {"note_date": note_date, "content": "", "tags": "", "updated_at": None}})
+        self.send_json({"note": dict(row) if row else {"note_date": note_date, "context": context, "content": "", "tags": "", "updated_at": None}})
 
     def search_notes(self):
         query = parse_qs(urlparse(self.path).query)
         term = str((query.get("q") or [""])[0]).strip()
         tag = normalize_tags((query.get("tag") or [""])[0])
+        context = normalize_context((query.get("context") or ["personal"])[0])
         if len(term) < 2 and not tag:
             self.send_json({"results": []})
             return
         with db() as conn:
             rows = conn.execute(
                 """
-                SELECT note_date, content, tags, updated_at
+                SELECT note_date, context, content, tags, updated_at
                 FROM notes
-                WHERE length(trim(content)) > 0 OR length(trim(tags)) > 0
+                WHERE context = ? AND (length(trim(content)) > 0 OR length(trim(tags)) > 0)
                 ORDER BY note_date DESC
                 LIMIT 500
-                """
+                """,
+                (context,),
             ).fetchall()
         results = []
         needle = term.lower()
@@ -695,6 +751,7 @@ class JournalHandler(BaseHTTPRequestHandler):
             results.append(
                 {
                     "note_date": row["note_date"],
+                    "context": row["context"],
                     "tags": tags,
                     "snippet": snippet,
                     "updated_at": row["updated_at"],
@@ -709,14 +766,15 @@ class JournalHandler(BaseHTTPRequestHandler):
         start = (query.get("from") or [""])[0]
         end = (query.get("to") or [""])[0]
         file_format = (query.get("format") or ["html"])[0].lower()
+        context = normalize_context((query.get("context") or ["personal"])[0])
         if start:
             validate_date(start)
         if end:
             validate_date(end)
         if file_format not in {"html", "md"}:
             raise ValueError("Unsupported export format")
-        clauses = ["length(trim(content)) > 0"]
-        params = []
+        clauses = ["context = ?", "length(trim(content)) > 0"]
+        params = [context]
         if start:
             clauses.append("note_date >= ?")
             params.append(start)
@@ -726,7 +784,7 @@ class JournalHandler(BaseHTTPRequestHandler):
         with db() as conn:
             rows = conn.execute(
                 f"""
-                SELECT note_date, content, tags, updated_at
+                SELECT note_date, context, content, tags, updated_at
                 FROM notes
                 WHERE {' AND '.join(clauses)}
                 ORDER BY note_date ASC
@@ -743,9 +801,8 @@ class JournalHandler(BaseHTTPRequestHandler):
             for row in rows:
                 tags = html.escape(row["tags"] or "")
                 tag_html = f"<p><strong>Tags:</strong> {tags}</p>" if tags else ""
-                sections.append(
-                    f"<article><h1>{html.escape(row['note_date'])}</h1>{tag_html}{row['content'] or ''}</article>"
-                )
+                title = f"{row['note_date']} - {row['context'].title()}"
+                sections.append(f"<article><h1>{html.escape(title)}</h1>{tag_html}{row['content'] or ''}</article>")
             body = (
                 "<!doctype html><html><head><meta charset='utf-8'><title>The Journal Export</title>"
                 "<style>body{font-family:system-ui;max-width:860px;margin:48px auto;line-height:1.6}"
