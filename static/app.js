@@ -189,7 +189,7 @@ function setSoundMuted(muted) {
 async function playTypewriterSound(key) {
   if (soundMuted || !key || key.length !== 1) return;
   const now = performance.now();
-  if (now - lastKeySoundAt < 24) return;
+  if (now - lastKeySoundAt < 30) return;
   lastKeySoundAt = now;
   const AudioEngine = window.AudioContext || window.webkitAudioContext;
   if (!AudioEngine) return;
@@ -197,17 +197,17 @@ async function playTypewriterSound(key) {
   if (audioContext.state === "suspended") {
     await audioContext.resume();
   }
-  const duration = 0.045;
+  const duration = 0.06;
   const start = audioContext.currentTime;
   const oscillator = audioContext.createOscillator();
   const gain = audioContext.createGain();
   const filter = audioContext.createBiquadFilter();
   oscillator.type = "square";
-  oscillator.frequency.value = 180 + Math.random() * 120;
+  oscillator.frequency.value = 220 + Math.random() * 140;
   filter.type = "lowpass";
-  filter.frequency.value = 1400;
+  filter.frequency.value = 1800;
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.12, start + 0.003);
+  gain.gain.exponentialRampToValueAtTime(0.28, start + 0.003);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(filter);
   filter.connect(gain);
