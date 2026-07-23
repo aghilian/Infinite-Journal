@@ -27,7 +27,7 @@ body {
 
 button,
 input,
-textarea {
+[contenteditable] {
   font: inherit;
 }
 
@@ -143,8 +143,40 @@ input {
   text-align: right;
 }
 
+.editor-toolbar {
+  position: sticky;
+  top: 100px;
+  z-index: 9;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px clamp(18px, 5vw, 64px);
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+}
+
+.tool-button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  min-height: 36px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.tool-button:hover {
+  background: #ece8df;
+}
+
+.underline-icon {
+  text-decoration: underline;
+}
+
 .today-sheet {
-  min-height: calc(100vh - 104px);
+  min-height: calc(100vh - 152px);
   padding: clamp(18px, 5vw, 64px);
   background: var(--paper);
   border-bottom: 1px solid var(--line);
@@ -157,15 +189,41 @@ input {
   margin: 0 auto;
   border: 0;
   outline: 0;
-  resize: none;
   color: var(--ink);
   background: transparent;
   line-height: 1.65;
   font-size: 1.08rem;
+  overflow-wrap: anywhere;
 }
 
-#todayEditor::placeholder {
+#todayEditor:empty::before {
+  content: attr(data-placeholder);
   color: #a0a4aa;
+  pointer-events: none;
+}
+
+#todayEditor p,
+#todayEditor div,
+.note-content p,
+.note-content div {
+  margin: 0 0 1rem;
+}
+
+#todayEditor ul,
+#todayEditor ol,
+.note-content ul,
+.note-content ol {
+  padding-left: 1.4rem;
+}
+
+#todayEditor img,
+.note-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 18px 0;
+  border-radius: 6px;
+  border: 1px solid var(--line);
 }
 
 .history {
@@ -197,9 +255,8 @@ input {
   font-weight: 600;
 }
 
-.note-card pre {
+.note-content {
   margin: 0;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.55;
 }
@@ -247,5 +304,11 @@ dialog::backdrop {
 
   .save-state {
     text-align: left;
+  }
+
+  .editor-toolbar {
+    top: 170px;
+    justify-content: flex-start;
+    overflow-x: auto;
   }
 }

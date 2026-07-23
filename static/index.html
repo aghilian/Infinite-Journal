@@ -37,13 +37,36 @@
         </div>
       </header>
 
+      <nav class="editor-toolbar" aria-label="Editor tools">
+        <button class="tool-button" type="button" data-command="bold" title="Bold" aria-label="Bold">
+          <strong>B</strong>
+        </button>
+        <button class="tool-button" type="button" data-command="italic" title="Italic" aria-label="Italic">
+          <em>I</em>
+        </button>
+        <button class="tool-button" type="button" data-command="underline" title="Underline" aria-label="Underline">
+          <span class="underline-icon">U</span>
+        </button>
+        <button class="tool-button" type="button" data-command="insertUnorderedList" title="Bulleted list" aria-label="Bulleted list">
+          &bull;
+        </button>
+        <button class="tool-button" type="button" data-command="insertOrderedList" title="Numbered list" aria-label="Numbered list">
+          1.
+        </button>
+        <button id="imageButton" class="tool-button" type="button" title="Add image" aria-label="Add image">
+          +
+        </button>
+        <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+      </nav>
+
       <section class="today-sheet" aria-label="Today's journal">
-        <textarea
+        <div
           id="todayEditor"
+          contenteditable="true"
           spellcheck="true"
-          placeholder="Start writing..."
+          data-placeholder="Start writing..."
           aria-label="Today's journal entry"
-        ></textarea>
+        ></div>
       </section>
 
       <section class="history" aria-label="Older notes">

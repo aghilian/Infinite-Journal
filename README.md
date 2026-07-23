@@ -10,6 +10,8 @@ Phase 1 private daily journaling app.
 - Reopens the same day at the end of today's note.
 - Older daily notes render below today, newest first.
 - Password change from the app.
+- Rich text formatting for bold, italic, underline, and lists.
+- Image upload and paste support.
 
 ## Local Run
 

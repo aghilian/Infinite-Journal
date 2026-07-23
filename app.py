@@ -3,24 +3,56 @@ import hashlib
 import hmac
 import html
 import json
+import mimetypes
 import os
+import re
 import secrets
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 
 APP_NAME = "The Journal"
 DATA_DIR = Path(os.environ.get("THEJOURNAL_DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "journal.db"
+ASSET_DIR = DATA_DIR / "assets"
 STATIC_DIR = Path(__file__).parent / "static"
 SESSION_DAYS = 14
 PBKDF2_ITERATIONS = 240_000
+MAX_JSON_BYTES = 12_000_000
+MAX_ASSET_BYTES = 8_000_000
+ALLOWED_IMAGE_TYPES = {
+    "image/gif": ".gif",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+ALLOWED_TAGS = {
+    "a",
+    "b",
+    "blockquote",
+    "br",
+    "div",
+    "em",
+    "h2",
+    "h3",
+    "i",
+    "img",
+    "li",
+    "ol",
+    "p",
+    "s",
+    "strong",
+    "u",
+    "ul",
+}
+VOID_TAGS = {"br", "img"}
 
 
 def utc_now():
@@ -38,6 +70,52 @@ def db():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+class NoteSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag not in ALLOWED_TAGS:
+            return
+        safe_attrs = []
+        attr_map = {name.lower(): value for name, value in attrs if value is not None}
+        if tag == "a":
+            href = attr_map.get("href", "").strip()
+            if href.startswith(("http://", "https://", "mailto:")):
+                safe_attrs.append(("href", href))
+                safe_attrs.append(("target", "_blank"))
+                safe_attrs.append(("rel", "noreferrer"))
+        elif tag == "img":
+            src = attr_map.get("src", "").strip()
+            if src.startswith("/assets/"):
+                safe_attrs.append(("src", src))
+                safe_attrs.append(("alt", attr_map.get("alt", "")[:160]))
+                safe_attrs.append(("loading", "lazy"))
+        attrs_text = "".join(f' {name}="{html.escape(value, quote=True)}"' for name, value in safe_attrs)
+        self.parts.append(f"<{tag}{attrs_text}>")
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in ALLOWED_TAGS and tag not in VOID_TAGS:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        self.parts.append(html.escape(data))
+
+    def get_html(self):
+        return "".join(self.parts)
+
+
+def sanitize_note(content):
+    if "<" not in content and ">" not in content:
+        return "<p>" + html.escape(content).replace("\n", "<br>") + "</p>" if content else ""
+    parser = NoteSanitizer()
+    parser.feed(content)
+    return parser.get_html()
 
 
 def password_hash(password, salt=None):
@@ -124,9 +202,17 @@ class JournalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_binary(self, body, content_type, status=HTTPStatus.OK):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, max-age=31536000")
+        self.end_headers()
+        self.wfile.write(body)
+
     def read_json(self):
         length = int(self.headers.get("Content-Length", "0"))
-        if length > 2_000_000:
+        if length > MAX_JSON_BYTES:
             raise ValueError("Request too large")
         data = self.rfile.read(length)
         return json.loads(data.decode("utf-8") or "{}")
@@ -176,6 +262,11 @@ class JournalHandler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             self.serve_static(path.removeprefix("/static/"))
             return
+        if path.startswith("/assets/"):
+            user = self.require_user()
+            if user:
+                self.serve_asset(path.removeprefix("/assets/"))
+            return
         if path == "/api/me":
             user = self.current_user()
             self.send_json({"authenticated": bool(user), "user": user})
@@ -214,6 +305,10 @@ class JournalHandler(BaseHTTPRequestHandler):
                 user = self.require_user()
                 if user:
                     self.change_password(user["id"])
+            elif path == "/api/assets":
+                user = self.require_user()
+                if user:
+                    self.upload_asset()
             else:
                 self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -238,6 +333,18 @@ class JournalHandler(BaseHTTPRequestHandler):
             path.read_text(encoding="utf-8"),
             content_type=content_types.get(path.suffix, "text/plain; charset=utf-8"),
         )
+
+    def serve_asset(self, name):
+        safe_name = Path(name).name
+        if safe_name != name or not re.match(r"^[a-f0-9]{32}\.(gif|jpg|png|webp)$", safe_name):
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        path = ASSET_DIR / safe_name
+        if not path.exists():
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_binary(path.read_bytes(), content_type)
 
     def login(self):
         payload = self.read_json()
@@ -303,7 +410,7 @@ class JournalHandler(BaseHTTPRequestHandler):
 
     def save_today(self):
         payload = self.read_json()
-        content = str(payload.get("content", ""))
+        content = sanitize_note(str(payload.get("content", "")))
         current_day = today_key()
         updated_at = utc_now().isoformat()
         with db() as conn:
@@ -316,6 +423,24 @@ class JournalHandler(BaseHTTPRequestHandler):
                 (current_day, content, updated_at),
             )
         self.send_json({"ok": True, "date": current_day, "updatedAt": updated_at})
+
+    def upload_asset(self):
+        payload = self.read_json()
+        data_url = str(payload.get("dataUrl", ""))
+        match = re.match(r"^data:(image/(?:gif|jpeg|png|webp));base64,(.+)$", data_url, re.DOTALL)
+        if not match:
+            self.send_json({"error": "Unsupported image data"}, HTTPStatus.BAD_REQUEST)
+            return
+        content_type, encoded = match.groups()
+        raw = base64.b64decode(encoded, validate=True)
+        if len(raw) > MAX_ASSET_BYTES:
+            self.send_json({"error": "Image must be 8 MB or smaller"}, HTTPStatus.BAD_REQUEST)
+            return
+        ASSET_DIR.mkdir(parents=True, exist_ok=True)
+        filename = f"{secrets.token_hex(16)}{ALLOWED_IMAGE_TYPES[content_type]}"
+        path = ASSET_DIR / filename
+        path.write_bytes(raw)
+        self.send_json({"ok": True, "url": f"/assets/{filename}"})
 
     def change_password(self, user_id):
         payload = self.read_json()

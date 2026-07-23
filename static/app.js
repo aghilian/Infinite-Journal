@@ -8,6 +8,9 @@ const saveState = document.querySelector("#saveState");
 const olderNotes = document.querySelector("#olderNotes");
 const logoutButton = document.querySelector("#logoutButton");
 const settingsButton = document.querySelector("#settingsButton");
+const toolbar = document.querySelector(".editor-toolbar");
+const imageButton = document.querySelector("#imageButton");
+const imageInput = document.querySelector("#imageInput");
 const passwordDialog = document.querySelector("#passwordDialog");
 const passwordForm = document.querySelector("#passwordForm");
 const passwordError = document.querySelector("#passwordError");
@@ -26,6 +29,17 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Request failed");
   return data;
+}
+
+function htmlFromPlainText(text) {
+  if (!text) return "";
+  const wrapper = document.createElement("div");
+  wrapper.textContent = text;
+  return `<p>${wrapper.innerHTML.replace(/\n/g, "<br>")}</p>`;
+}
+
+function normalizeStoredContent(content) {
+  return /<\/?[a-z][\s\S]*>/i.test(content) ? content : htmlFromPlainText(content);
 }
 
 function formatDate(value) {
@@ -65,24 +79,29 @@ function renderOlder(notes) {
     const time = document.createElement("time");
     time.dateTime = note.note_date;
     time.textContent = formatDate(note.note_date);
-    const pre = document.createElement("pre");
-    pre.textContent = note.content;
-    article.append(time, pre);
+    const content = document.createElement("div");
+    content.className = "note-content";
+    content.innerHTML = normalizeStoredContent(note.content || "");
+    article.append(time, content);
     olderNotes.append(article);
   }
 }
 
 function placeCursorAtEnd() {
   todayEditor.focus();
-  todayEditor.selectionStart = todayEditor.value.length;
-  todayEditor.selectionEnd = todayEditor.value.length;
+  const range = document.createRange();
+  range.selectNodeContents(todayEditor);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 async function loadJournal() {
   const data = await api("/api/journal");
   todayTitle.textContent = formatDate(data.today.date);
-  todayEditor.value = data.today.content || "";
-  lastSavedContent = todayEditor.value;
+  todayEditor.innerHTML = normalizeStoredContent(data.today.content || "");
+  lastSavedContent = todayEditor.innerHTML;
   saveState.textContent = data.today.updatedAt ? "Saved" : "New";
   renderOlder(data.older || []);
   showJournal();
@@ -90,21 +109,58 @@ async function loadJournal() {
 }
 
 async function saveToday() {
-  if (saving || todayEditor.value === lastSavedContent) return;
+  if (saving || todayEditor.innerHTML === lastSavedContent) return;
   saving = true;
   saveState.textContent = "Saving...";
   try {
     await api("/api/journal/today", {
       method: "POST",
-      body: JSON.stringify({ content: todayEditor.value }),
+      body: JSON.stringify({ content: todayEditor.innerHTML }),
     });
-    lastSavedContent = todayEditor.value;
+    lastSavedContent = todayEditor.innerHTML;
     saveState.textContent = "Saved";
   } catch (error) {
     saveState.textContent = "Save failed";
   } finally {
     saving = false;
   }
+}
+
+function exec(command) {
+  todayEditor.focus();
+  document.execCommand(command, false, null);
+  scheduleSave();
+}
+
+function insertHtmlAtCursor(markup) {
+  todayEditor.focus();
+  document.execCommand("insertHTML", false, markup);
+  scheduleSave();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadImage(file) {
+  if (!file.type.startsWith("image/")) return;
+  if (file.size > 8_000_000) {
+    saveState.textContent = "Image too large";
+    return;
+  }
+  saveState.textContent = "Uploading image...";
+  const dataUrl = await readFileAsDataUrl(file);
+  const asset = await api("/api/assets", {
+    method: "POST",
+    body: JSON.stringify({ filename: file.name, type: file.type, dataUrl }),
+  });
+  const alt = file.name ? file.name.replace(/[<>"']/g, "") : "Journal image";
+  insertHtmlAtCursor(`<img src="${asset.url}" alt="${alt}" loading="lazy">`);
 }
 
 function scheduleSave() {
@@ -131,6 +187,41 @@ loginForm.addEventListener("submit", async (event) => {
 
 todayEditor.addEventListener("input", scheduleSave);
 todayEditor.addEventListener("blur", saveToday);
+
+toolbar.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-command]");
+  if (!button) return;
+  exec(button.dataset.command);
+});
+
+imageButton.addEventListener("click", () => imageInput.click());
+
+imageInput.addEventListener("change", async () => {
+  const file = imageInput.files[0];
+  imageInput.value = "";
+  if (!file) return;
+  try {
+    await uploadImage(file);
+  } catch {
+    saveState.textContent = "Image upload failed";
+  }
+});
+
+todayEditor.addEventListener("paste", async (event) => {
+  const images = [...event.clipboardData.items]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (!images.length) return;
+  event.preventDefault();
+  for (const image of images) {
+    try {
+      await uploadImage(image);
+    } catch {
+      saveState.textContent = "Image upload failed";
+    }
+  }
+});
 
 logoutButton.addEventListener("click", async () => {
   await saveToday();
