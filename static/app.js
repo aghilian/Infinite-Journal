@@ -54,6 +54,9 @@ let audioContext = null;
 let lastKeySoundAt = 0;
 let personalToken = "";
 let pinMode = "unlock";
+let personalIdleTimer = null;
+let lastPersonalActivityAt = 0;
+const PERSONAL_IDLE_MS = 30 * 60 * 1000;
 
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -66,7 +69,11 @@ async function api(path, options = {}) {
     ...options,
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Request failed");
+  if (!response.ok) {
+    const error = new Error(data.error || "Request failed");
+    error.pinRequired = Boolean(data.pinRequired);
+    throw error;
+  }
   return data;
 }
 
@@ -121,6 +128,41 @@ function openPinDialog(mode) {
   requestAnimationFrame(() => personalPin.focus());
 }
 
+function clearPersonalIdleTimer() {
+  clearTimeout(personalIdleTimer);
+  personalIdleTimer = null;
+}
+
+function personalIsIdle() {
+  return lastPersonalActivityAt && Date.now() - lastPersonalActivityAt >= PERSONAL_IDLE_MS;
+}
+
+async function lockPersonalSpace({ save = true } = {}) {
+  if (!personalToken) return;
+  if (save) await saveToday();
+  personalToken = "";
+  clearPersonalIdleTimer();
+  if (activeContext === "personal") {
+    await loadJournal();
+  }
+}
+
+function resetPersonalIdleTimer() {
+  if (activeContext !== "personal" || !personalToken || pinDialog.open) return;
+  lastPersonalActivityAt = Date.now();
+  clearTimeout(personalIdleTimer);
+  personalIdleTimer = setTimeout(lockPersonalSpace, PERSONAL_IDLE_MS);
+}
+
+function checkPersonalIdle() {
+  if (activeContext !== "personal" || !personalToken) return;
+  if (personalIsIdle()) {
+    lockPersonalSpace();
+    return;
+  }
+  resetPersonalIdleTimer();
+}
+
 async function ensurePersonalUnlocked() {
   if (activeContext !== "personal" || personalToken) return true;
   todayEditor.innerHTML = "";
@@ -149,7 +191,10 @@ function playTypewriterSound(key) {
   const now = performance.now();
   if (now - lastKeySoundAt < 24) return;
   lastKeySoundAt = now;
-  audioContext = audioContext || new AudioContext();
+  const AudioEngine = window.AudioContext || window.webkitAudioContext;
+  if (!AudioEngine) return;
+  audioContext = audioContext || new AudioEngine();
+  if (audioContext.state === "suspended") audioContext.resume();
   const duration = 0.035;
   const start = audioContext.currentTime;
   const oscillator = audioContext.createOscillator();
@@ -276,7 +321,16 @@ function placeCursorAtEnd() {
 async function loadJournal() {
   setTheme(activeContext);
   if (!(await ensurePersonalUnlocked())) return;
-  const data = await api(`/api/journal?context=${encodeURIComponent(activeContext)}`);
+  let data;
+  try {
+    data = await api(`/api/journal?context=${encodeURIComponent(activeContext)}`);
+  } catch (error) {
+    if (error.pinRequired) {
+      await lockPersonalSpace({ save: false });
+      return;
+    }
+    throw error;
+  }
   todayTitle.textContent = formatDate(data.today.date);
   todayEditor.innerHTML = normalizeStoredContent(data.today.content || "");
   todayTags.value = data.today.tags || "";
@@ -285,6 +339,7 @@ async function loadJournal() {
   saveState.textContent = data.today.updatedAt ? "Saved" : "New";
   renderOlder(data.older || []);
   showJournal();
+  resetPersonalIdleTimer();
   requestAnimationFrame(placeCursorAtEnd);
 }
 
@@ -304,6 +359,10 @@ async function saveToday() {
     todayTags.dataset.saved = currentTags;
     saveState.textContent = "Saved";
   } catch (error) {
+    if (error.pinRequired) {
+      await lockPersonalSpace({ save: false });
+      return;
+    }
     saveState.textContent = "Save failed";
   } finally {
     saving = false;
@@ -440,7 +499,8 @@ document.querySelectorAll(".context-option").forEach((button) => {
   button.addEventListener("click", async () => {
     if (button.dataset.context === activeContext) return;
     await saveToday();
-    if (activeContext === "personal") personalToken = "";
+    personalToken = "";
+    clearPersonalIdleTimer();
     activeContext = button.dataset.context;
     resultsPanel.hidden = true;
     resultsList.textContent = "";
@@ -480,6 +540,7 @@ todayEditor.addEventListener("paste", async (event) => {
 logoutButton.addEventListener("click", async () => {
   await saveToday();
   personalToken = "";
+  clearPersonalIdleTimer();
   await api("/api/logout", { method: "POST" });
   showLogin();
 });
@@ -505,6 +566,7 @@ passwordForm.addEventListener("submit", async (event) => {
     });
     passwordDialog.close();
     personalToken = "";
+    clearPersonalIdleTimer();
     await api("/api/logout", { method: "POST" });
     showLogin();
   } catch (error) {
@@ -555,6 +617,7 @@ pinForm.addEventListener("submit", async (event) => {
     });
     personalToken = result.token;
     pinDialog.close();
+    resetPersonalIdleTimer();
     await loadJournal();
   } catch (error) {
     pinError.textContent = error.message;
@@ -567,9 +630,19 @@ personalPin.addEventListener("input", () => {
 
 useWorkInstead.addEventListener("click", async () => {
   personalToken = "";
+  clearPersonalIdleTimer();
   activeContext = "work";
   pinDialog.close();
   await loadJournal();
+});
+
+["pointerdown", "keydown", "scroll", "touchstart"].forEach((eventName) => {
+  document.addEventListener(eventName, resetPersonalIdleTimer, { passive: true });
+});
+
+window.addEventListener("focus", checkPersonalIdle);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkPersonalIdle();
 });
 
 (async function boot() {

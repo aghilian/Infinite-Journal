@@ -43,6 +43,7 @@ body {
   color: var(--ink);
   font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 17px;
+  overflow-x: hidden;
 }
 
 button,
@@ -472,6 +473,7 @@ dialog {
   border-radius: 8px;
   padding: 0;
   max-width: min(440px, calc(100vw - 32px));
+  overflow: hidden;
 }
 
 dialog::backdrop {
@@ -514,13 +516,25 @@ dialog::backdrop {
 
 .pin-form {
   width: min(380px, calc(100vw - 32px));
+  padding: 28px;
 }
 
 .pin-form h2 {
   font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.pin-form label {
+  margin-bottom: 18px;
+}
+
+.pin-form .dialog-actions {
+  margin-top: 4px;
 }
 
 #personalPin {
+  width: 100%;
+  min-width: 0;
   font-size: 1.6rem;
   letter-spacing: 0.18em;
   text-align: center;

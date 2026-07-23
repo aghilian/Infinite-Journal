@@ -490,11 +490,13 @@ class JournalHandler(BaseHTTPRequestHandler):
         token = self.headers.get("X-Personal-Token", "") or (query.get("personalToken") or [""])[0]
         if not token:
             return False
+        now = time.time()
         digest = personal_token_digest(token)
         expiry = PERSONAL_PIN_TOKENS.get((user_id, digest), 0)
-        if expiry <= time.time():
+        if expiry <= now:
             PERSONAL_PIN_TOKENS.pop((user_id, digest), None)
             return False
+        PERSONAL_PIN_TOKENS[(user_id, digest)] = now + PIN_TOKEN_SECONDS
         return True
 
     def require_personal_access(self, user, context):
