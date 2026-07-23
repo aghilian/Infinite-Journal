@@ -15,7 +15,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 APP_NAME = "The Journal"
@@ -118,6 +118,61 @@ def sanitize_note(content):
     return parser.get_html()
 
 
+class TextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() in {"br", "p", "div", "li", "h2", "h3"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def get_text(self):
+        return re.sub(r"\n{3,}", "\n\n", "".join(self.parts)).strip()
+
+
+def note_text(content):
+    if "<" not in content and ">" not in content:
+        return content.strip()
+    parser = TextExtractor()
+    parser.feed(content)
+    return parser.get_text()
+
+
+def normalize_tags(tags):
+    raw = tags if isinstance(tags, list) else str(tags or "").split(",")
+    cleaned = []
+    seen = set()
+    for tag in raw:
+        value = re.sub(r"\s+", " ", str(tag).strip().lower())
+        value = re.sub(r"[^a-z0-9 _-]", "", value).strip(" -_")
+        if value and value not in seen:
+            cleaned.append(value[:40])
+            seen.add(value)
+    return ", ".join(cleaned[:20])
+
+
+def validate_date(value):
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise ValueError("Invalid date")
+    return value
+
+
+def note_to_markdown(row):
+    tags = row["tags"] or ""
+    body = note_text(row["content"] or "")
+    lines = [f"# {row['note_date']}", ""]
+    if tags:
+        lines.extend([f"Tags: {tags}", ""])
+    lines.append(body)
+    return "\n".join(lines).strip() + "\n"
+
+
 def password_hash(password, salt=None):
     salt = salt or secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
@@ -149,10 +204,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS notes (
                 note_date TEXT PRIMARY KEY,
                 content TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL
             );
             """
         )
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(notes)").fetchall()}
+        if "tags" not in columns:
+            conn.execute("ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
         user_count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
         if user_count == 0:
             username = os.environ.get("THEJOURNAL_USER", "admin")
@@ -277,6 +336,21 @@ class JournalHandler(BaseHTTPRequestHandler):
                 return
             self.get_journal()
             return
+        if path == "/api/note":
+            user = self.require_user()
+            if user:
+                self.get_note()
+            return
+        if path == "/api/search":
+            user = self.require_user()
+            if user:
+                self.search_notes()
+            return
+        if path == "/api/export":
+            user = self.require_user()
+            if user:
+                self.export_notes()
+            return
         self.serve_index()
 
     def do_HEAD(self):
@@ -388,7 +462,7 @@ class JournalHandler(BaseHTTPRequestHandler):
             today = conn.execute("SELECT * FROM notes WHERE note_date = ?", (current_day,)).fetchone()
             older = conn.execute(
                 """
-                SELECT note_date, content, updated_at
+                SELECT note_date, content, tags, updated_at
                 FROM notes
                 WHERE note_date < ? AND length(trim(content)) > 0
                 ORDER BY note_date DESC
@@ -402,6 +476,7 @@ class JournalHandler(BaseHTTPRequestHandler):
                 "today": {
                     "date": current_day,
                     "content": today["content"] if today else "",
+                    "tags": today["tags"] if today else "",
                     "updatedAt": today["updated_at"] if today else None,
                 },
                 "older": [dict(row) for row in older],
@@ -411,18 +486,133 @@ class JournalHandler(BaseHTTPRequestHandler):
     def save_today(self):
         payload = self.read_json()
         content = sanitize_note(str(payload.get("content", "")))
+        tags = normalize_tags(payload.get("tags", ""))
         current_day = today_key()
         updated_at = utc_now().isoformat()
         with db() as conn:
             conn.execute(
                 """
-                INSERT INTO notes (note_date, content, updated_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(note_date) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at
+                INSERT INTO notes (note_date, content, tags, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(note_date) DO UPDATE SET
+                    content = excluded.content,
+                    tags = excluded.tags,
+                    updated_at = excluded.updated_at
                 """,
-                (current_day, content, updated_at),
+                (current_day, content, tags, updated_at),
             )
         self.send_json({"ok": True, "date": current_day, "updatedAt": updated_at})
+
+    def get_note(self):
+        query = parse_qs(urlparse(self.path).query)
+        note_date = validate_date((query.get("date") or [""])[0])
+        with db() as conn:
+            row = conn.execute(
+                "SELECT note_date, content, tags, updated_at FROM notes WHERE note_date = ?",
+                (note_date,),
+            ).fetchone()
+        self.send_json({"note": dict(row) if row else {"note_date": note_date, "content": "", "tags": "", "updated_at": None}})
+
+    def search_notes(self):
+        query = parse_qs(urlparse(self.path).query)
+        term = str((query.get("q") or [""])[0]).strip()
+        tag = normalize_tags((query.get("tag") or [""])[0])
+        if len(term) < 2 and not tag:
+            self.send_json({"results": []})
+            return
+        with db() as conn:
+            rows = conn.execute(
+                """
+                SELECT note_date, content, tags, updated_at
+                FROM notes
+                WHERE length(trim(content)) > 0 OR length(trim(tags)) > 0
+                ORDER BY note_date DESC
+                LIMIT 500
+                """
+            ).fetchall()
+        results = []
+        needle = term.lower()
+        for row in rows:
+            text = note_text(row["content"] or "")
+            tags = row["tags"] or ""
+            if tag and tag not in [item.strip() for item in tags.split(",")]:
+                continue
+            if needle and needle not in text.lower() and needle not in tags.lower():
+                continue
+            snippet_source = text or tags
+            index = snippet_source.lower().find(needle) if needle else 0
+            start = max(index - 70, 0)
+            snippet = snippet_source[start : start + 180].strip()
+            results.append(
+                {
+                    "note_date": row["note_date"],
+                    "tags": tags,
+                    "snippet": snippet,
+                    "updated_at": row["updated_at"],
+                }
+            )
+            if len(results) >= 50:
+                break
+        self.send_json({"results": results})
+
+    def export_notes(self):
+        query = parse_qs(urlparse(self.path).query)
+        start = (query.get("from") or [""])[0]
+        end = (query.get("to") or [""])[0]
+        file_format = (query.get("format") or ["html"])[0].lower()
+        if start:
+            validate_date(start)
+        if end:
+            validate_date(end)
+        if file_format not in {"html", "md"}:
+            raise ValueError("Unsupported export format")
+        clauses = ["length(trim(content)) > 0"]
+        params = []
+        if start:
+            clauses.append("note_date >= ?")
+            params.append(start)
+        if end:
+            clauses.append("note_date <= ?")
+            params.append(end)
+        with db() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT note_date, content, tags, updated_at
+                FROM notes
+                WHERE {' AND '.join(clauses)}
+                ORDER BY note_date ASC
+                """,
+                params,
+            ).fetchall()
+        stamp = datetime.now().strftime("%Y%m%d")
+        if file_format == "md":
+            body = "\n\n".join(note_to_markdown(row) for row in rows).encode("utf-8")
+            filename = f"the-journal-export-{stamp}.md"
+            content_type = "text/markdown; charset=utf-8"
+        else:
+            sections = []
+            for row in rows:
+                tags = html.escape(row["tags"] or "")
+                tag_html = f"<p><strong>Tags:</strong> {tags}</p>" if tags else ""
+                sections.append(
+                    f"<article><h1>{html.escape(row['note_date'])}</h1>{tag_html}{row['content'] or ''}</article>"
+                )
+            body = (
+                "<!doctype html><html><head><meta charset='utf-8'><title>The Journal Export</title>"
+                "<style>body{font-family:system-ui;max-width:860px;margin:48px auto;line-height:1.6}"
+                "article{border-bottom:1px solid #ddd;padding:0 0 32px;margin:0 0 32px}"
+                "img{max-width:100%;height:auto}</style></head><body>"
+                + "".join(sections)
+                + "</body></html>"
+            ).encode("utf-8")
+            filename = f"the-journal-export-{stamp}.html"
+            content_type = "text/html; charset=utf-8"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.end_headers()
+        self.wfile.write(body)
 
     def upload_asset(self):
         payload = self.read_json()

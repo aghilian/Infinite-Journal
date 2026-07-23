@@ -27,6 +27,7 @@ body {
 
 button,
 input,
+select,
 [contenteditable] {
   font: inherit;
 }
@@ -94,7 +95,8 @@ label {
   margin: 16px 0;
 }
 
-input {
+input,
+select {
   border: 1px solid var(--line);
   border-radius: 6px;
   min-height: 42px;
@@ -156,6 +158,62 @@ input {
   backdrop-filter: blur(10px);
 }
 
+.journal-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, auto) minmax(360px, auto);
+  gap: 10px;
+  padding: 12px clamp(18px, 5vw, 64px);
+  background: #fbfaf7;
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tool-form input[type="search"] {
+  width: min(420px, 100%);
+}
+
+.results-panel {
+  padding: 22px clamp(18px, 5vw, 64px);
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+
+.results-header {
+  width: min(980px, 100%);
+  margin: 0 auto 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.results-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.result-row {
+  width: min(980px, 100%);
+  margin: 0 auto 8px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.result-row:hover {
+  background: #f5f3ef;
+}
+
 .tool-button {
   display: grid;
   place-items: center;
@@ -180,6 +238,15 @@ input {
   padding: clamp(18px, 5vw, 64px);
   background: var(--paper);
   border-bottom: 1px solid var(--line);
+}
+
+.tag-row {
+  width: min(980px, 100%);
+  margin: 0 auto 22px;
+}
+
+.tag-row input {
+  width: 100%;
 }
 
 #todayEditor {
@@ -255,6 +322,27 @@ input {
   font-weight: 600;
 }
 
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 16px;
+}
+
+.tag-chip {
+  min-height: 28px;
+  padding: 0 10px;
+  background: #edf4f2;
+  color: var(--accent-dark);
+  border: 1px solid #cbded9;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+.tag-chip:hover {
+  background: #dfeeea;
+}
+
 .note-content {
   margin: 0;
   overflow-wrap: anywhere;
@@ -310,5 +398,15 @@ dialog::backdrop {
     top: 170px;
     justify-content: flex-start;
     overflow-x: auto;
+  }
+
+  .journal-tools,
+  .tool-form {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .tool-form {
+    display: grid;
   }
 }

@@ -11,6 +11,19 @@ const settingsButton = document.querySelector("#settingsButton");
 const toolbar = document.querySelector(".editor-toolbar");
 const imageButton = document.querySelector("#imageButton");
 const imageInput = document.querySelector("#imageInput");
+const todayTags = document.querySelector("#todayTags");
+const searchForm = document.querySelector("#searchForm");
+const searchInput = document.querySelector("#searchInput");
+const jumpForm = document.querySelector("#jumpForm");
+const jumpDate = document.querySelector("#jumpDate");
+const exportForm = document.querySelector("#exportForm");
+const exportFrom = document.querySelector("#exportFrom");
+const exportTo = document.querySelector("#exportTo");
+const exportFormat = document.querySelector("#exportFormat");
+const resultsPanel = document.querySelector("#resultsPanel");
+const resultsTitle = document.querySelector("#resultsTitle");
+const resultsList = document.querySelector("#resultsList");
+const clearResults = document.querySelector("#clearResults");
 const passwordDialog = document.querySelector("#passwordDialog");
 const passwordForm = document.querySelector("#passwordForm");
 const passwordError = document.querySelector("#passwordError");
@@ -79,12 +92,82 @@ function renderOlder(notes) {
     const time = document.createElement("time");
     time.dateTime = note.note_date;
     time.textContent = formatDate(note.note_date);
+    const tags = renderTags(note.tags || "");
     const content = document.createElement("div");
     content.className = "note-content";
     content.innerHTML = normalizeStoredContent(note.content || "");
-    article.append(time, content);
+    article.append(time);
+    if (tags) article.append(tags);
+    article.append(content);
     olderNotes.append(article);
   }
+}
+
+function renderTags(tags) {
+  const items = tags.split(",").map((tag) => tag.trim()).filter(Boolean);
+  if (!items.length) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "tag-list";
+  for (const tag of items) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tag-chip";
+    chip.textContent = tag;
+    chip.addEventListener("click", () => searchByTag(tag));
+    wrap.append(chip);
+  }
+  return wrap;
+}
+
+function renderResults(title, results) {
+  resultsPanel.hidden = false;
+  resultsTitle.textContent = title;
+  resultsList.textContent = "";
+  if (!results.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-history";
+    empty.textContent = "No matching notes.";
+    resultsList.append(empty);
+    return;
+  }
+  for (const result of results) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "result-row";
+    button.addEventListener("click", () => showSelectedNote(result.note_date));
+    const date = document.createElement("strong");
+    date.textContent = formatDate(result.note_date);
+    const snippet = document.createElement("span");
+    snippet.textContent = result.snippet || result.tags || "No preview";
+    button.append(date, snippet);
+    resultsList.append(button);
+  }
+  resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function showSelectedNote(date) {
+  const data = await api(`/api/note?date=${encodeURIComponent(date)}`);
+  const note = data.note;
+  resultsPanel.hidden = false;
+  resultsTitle.textContent = formatDate(note.note_date);
+  resultsList.textContent = "";
+  const article = document.createElement("article");
+  article.className = "note-card selected-note";
+  const tags = renderTags(note.tags || "");
+  const content = document.createElement("div");
+  content.className = "note-content";
+  content.innerHTML = normalizeStoredContent(note.content || "");
+  if (tags) article.append(tags);
+  if (note.content) {
+    article.append(content);
+  } else {
+    const empty = document.createElement("p");
+    empty.className = "empty-history";
+    empty.textContent = "No note exists for this date.";
+    article.append(empty);
+  }
+  resultsList.append(article);
+  resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function placeCursorAtEnd() {
@@ -101,7 +184,9 @@ async function loadJournal() {
   const data = await api("/api/journal");
   todayTitle.textContent = formatDate(data.today.date);
   todayEditor.innerHTML = normalizeStoredContent(data.today.content || "");
+  todayTags.value = data.today.tags || "";
   lastSavedContent = todayEditor.innerHTML;
+  todayTags.dataset.saved = todayTags.value;
   saveState.textContent = data.today.updatedAt ? "Saved" : "New";
   renderOlder(data.older || []);
   showJournal();
@@ -109,15 +194,18 @@ async function loadJournal() {
 }
 
 async function saveToday() {
-  if (saving || todayEditor.innerHTML === lastSavedContent) return;
+  const currentContent = todayEditor.innerHTML;
+  const currentTags = todayTags.value;
+  if (saving || (currentContent === lastSavedContent && currentTags === todayTags.dataset.saved)) return;
   saving = true;
   saveState.textContent = "Saving...";
   try {
     await api("/api/journal/today", {
       method: "POST",
-      body: JSON.stringify({ content: todayEditor.innerHTML }),
+      body: JSON.stringify({ content: currentContent, tags: currentTags }),
     });
-    lastSavedContent = todayEditor.innerHTML;
+    lastSavedContent = currentContent;
+    todayTags.dataset.saved = currentTags;
     saveState.textContent = "Saved";
   } catch (error) {
     saveState.textContent = "Save failed";
@@ -187,11 +275,46 @@ loginForm.addEventListener("submit", async (event) => {
 
 todayEditor.addEventListener("input", scheduleSave);
 todayEditor.addEventListener("blur", saveToday);
+todayTags.addEventListener("input", scheduleSave);
+todayTags.addEventListener("blur", saveToday);
 
 toolbar.addEventListener("click", (event) => {
   const button = event.target.closest("[data-command]");
   if (!button) return;
   exec(button.dataset.command);
+});
+
+async function searchByTag(tag) {
+  const data = await api(`/api/search?tag=${encodeURIComponent(tag)}`);
+  renderResults(`Tag: ${tag}`, data.results || []);
+}
+
+searchForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = searchInput.value.trim();
+  if (query.length < 2) return;
+  const data = await api(`/api/search?q=${encodeURIComponent(query)}`);
+  renderResults(`Search: ${query}`, data.results || []);
+});
+
+jumpForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!jumpDate.value) return;
+  await showSelectedNote(jumpDate.value);
+});
+
+exportForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const params = new URLSearchParams();
+  if (exportFrom.value) params.set("from", exportFrom.value);
+  if (exportTo.value) params.set("to", exportTo.value);
+  params.set("format", exportFormat.value);
+  window.location.href = `/api/export?${params.toString()}`;
+});
+
+clearResults.addEventListener("click", () => {
+  resultsPanel.hidden = true;
+  resultsList.textContent = "";
 });
 
 imageButton.addEventListener("click", () => imageInput.click());

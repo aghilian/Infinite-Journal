@@ -12,6 +12,9 @@ Phase 1 private daily journaling app.
 - Password change from the app.
 - Rich text formatting for bold, italic, underline, and lists.
 - Image upload and paste support.
+- Search across notes and tags.
+- Date jump for opening a specific day.
+- HTML and Markdown export.
 
 ## Local Run
 

@@ -59,7 +59,39 @@
         <input id="imageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
       </nav>
 
+      <section class="journal-tools" aria-label="Journal retrieval tools">
+        <form id="searchForm" class="tool-form">
+          <input id="searchInput" type="search" placeholder="Search notes" aria-label="Search notes" />
+          <button type="submit">Search</button>
+        </form>
+        <form id="jumpForm" class="tool-form">
+          <input id="jumpDate" type="date" aria-label="Jump to date" />
+          <button type="submit">Jump</button>
+        </form>
+        <form id="exportForm" class="tool-form">
+          <input id="exportFrom" type="date" aria-label="Export from date" />
+          <input id="exportTo" type="date" aria-label="Export to date" />
+          <select id="exportFormat" aria-label="Export format">
+            <option value="html">HTML</option>
+            <option value="md">Markdown</option>
+          </select>
+          <button type="submit">Export</button>
+        </form>
+      </section>
+
+      <section id="resultsPanel" class="results-panel" hidden>
+        <div class="results-header">
+          <h2 id="resultsTitle">Results</h2>
+          <button id="clearResults" class="ghost" type="button">Clear</button>
+        </div>
+        <div id="resultsList"></div>
+      </section>
+
       <section class="today-sheet" aria-label="Today's journal">
+        <label class="tag-row">
+          Tags
+          <input id="todayTags" placeholder="health, work, idea" />
+        </label>
         <div
           id="todayEditor"
           contenteditable="true"
