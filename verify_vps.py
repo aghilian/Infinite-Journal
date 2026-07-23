@@ -33,6 +33,7 @@ commands = [
     "curl -kIs --resolve thejournal.opensails.ca:443:127.0.0.1 https://thejournal.opensails.ca/ | sed -n '1,12p'",
     (
         "tmp=$(mktemp) && "
+        "set -o pipefail && "
         "curl -ksS --resolve thejournal.opensails.ca:443:127.0.0.1 "
         "-c $tmp -H 'Content-Type: application/json' "
         f"-d '{{\"username\":\"admin\",\"password\":\"{APP_PASSWORD}\"}}' "
