@@ -57,6 +57,18 @@ let pinMode = "unlock";
 let personalIdleTimer = null;
 let lastPersonalActivityAt = 0;
 const PERSONAL_IDLE_MS = 30 * 60 * 1000;
+const SOUND_KEYS = new Set([
+  "Backspace",
+  "Enter",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+]);
 
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -187,7 +199,7 @@ function setSoundMuted(muted) {
 }
 
 async function playTypewriterSound(key) {
-  if (soundMuted || !key || key.length !== 1) return;
+  if (soundMuted || !key || (key.length !== 1 && !SOUND_KEYS.has(key))) return;
   const now = performance.now();
   if (now - lastKeySoundAt < 30) return;
   lastKeySoundAt = now;
