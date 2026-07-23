@@ -37,6 +37,13 @@ const serverBackup = document.querySelector("#serverBackup");
 const restoreBackupButton = document.querySelector("#restoreBackupButton");
 const restoreBackupInput = document.querySelector("#restoreBackupInput");
 const backupStatus = document.querySelector("#backupStatus");
+const pinDialog = document.querySelector("#pinDialog");
+const pinForm = document.querySelector("#pinForm");
+const pinTitle = document.querySelector("#pinTitle");
+const personalPin = document.querySelector("#personalPin");
+const pinError = document.querySelector("#pinError");
+const pinSubmit = document.querySelector("#pinSubmit");
+const useWorkInstead = document.querySelector("#useWorkInstead");
 
 let saveTimer = null;
 let lastSavedContent = "";
@@ -45,10 +52,16 @@ let activeContext = localStorage.getItem("journalContext") || "personal";
 let soundMuted = localStorage.getItem("typewriterMuted") === "true";
 let audioContext = null;
 let lastKeySoundAt = 0;
+let personalToken = "";
+let pinMode = "unlock";
 
 async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (personalToken) {
+    headers["X-Personal-Token"] = personalToken;
+  }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
     credentials: "same-origin",
     ...options,
   });
@@ -96,6 +109,33 @@ function setTheme(context) {
   personalMode.classList.toggle("active", activeContext === "personal");
   workMode.classList.toggle("active", activeContext === "work");
   contextLabel.textContent = activeContext === "work" ? "Work Journal" : "Personal Journal";
+}
+
+function openPinDialog(mode) {
+  pinMode = mode;
+  pinTitle.textContent = mode === "set" ? "Set Personal PIN" : "Enter Personal PIN";
+  pinSubmit.textContent = mode === "set" ? "Set PIN" : "Unlock";
+  pinError.textContent = "";
+  personalPin.value = "";
+  if (!pinDialog.open) pinDialog.showModal();
+  requestAnimationFrame(() => personalPin.focus());
+}
+
+async function ensurePersonalUnlocked() {
+  if (activeContext !== "personal" || personalToken) return true;
+  todayEditor.innerHTML = "";
+  todayTags.value = "";
+  olderNotes.textContent = "";
+  saveState.textContent = "Locked";
+  showJournal();
+  return requestPersonalPinAccess();
+}
+
+async function requestPersonalPinAccess() {
+  if (personalToken) return true;
+  const status = await api("/api/personal-pin");
+  openPinDialog(status.isSet ? "unlock" : "set");
+  return false;
 }
 
 function setSoundMuted(muted) {
@@ -235,6 +275,7 @@ function placeCursorAtEnd() {
 
 async function loadJournal() {
   setTheme(activeContext);
+  if (!(await ensurePersonalUnlocked())) return;
   const data = await api(`/api/journal?context=${encodeURIComponent(activeContext)}`);
   todayTitle.textContent = formatDate(data.today.date);
   todayEditor.innerHTML = normalizeStoredContent(data.today.content || "");
@@ -248,6 +289,7 @@ async function loadJournal() {
 }
 
 async function saveToday() {
+  if (activeContext === "personal" && !personalToken) return;
   const currentContent = todayEditor.innerHTML;
   const currentTags = todayTags.value;
   if (saving || (currentContent === lastSavedContent && currentTags === todayTags.dataset.saved)) return;
@@ -377,13 +419,15 @@ jumpForm.addEventListener("submit", async (event) => {
   await showSelectedNote(jumpDate.value, activeContext);
 });
 
-exportForm.addEventListener("submit", (event) => {
+exportForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (activeContext === "personal" && !(await requestPersonalPinAccess())) return;
   const params = new URLSearchParams();
   if (exportFrom.value) params.set("from", exportFrom.value);
   if (exportTo.value) params.set("to", exportTo.value);
   params.set("format", exportFormat.value);
   params.set("context", activeContext);
+  if (activeContext === "personal") params.set("personalToken", personalToken);
   window.location.href = `/api/export?${params.toString()}`;
 });
 
@@ -396,6 +440,7 @@ document.querySelectorAll(".context-option").forEach((button) => {
   button.addEventListener("click", async () => {
     if (button.dataset.context === activeContext) return;
     await saveToday();
+    if (activeContext === "personal") personalToken = "";
     activeContext = button.dataset.context;
     resultsPanel.hidden = true;
     resultsList.textContent = "";
@@ -434,6 +479,7 @@ todayEditor.addEventListener("paste", async (event) => {
 
 logoutButton.addEventListener("click", async () => {
   await saveToday();
+  personalToken = "";
   await api("/api/logout", { method: "POST" });
   showLogin();
 });
@@ -458,6 +504,7 @@ passwordForm.addEventListener("submit", async (event) => {
       }),
     });
     passwordDialog.close();
+    personalToken = "";
     await api("/api/logout", { method: "POST" });
     showLogin();
   } catch (error) {
@@ -465,13 +512,15 @@ passwordForm.addEventListener("submit", async (event) => {
   }
 });
 
-downloadBackup.addEventListener("click", () => {
-  window.location.href = "/api/backup";
+downloadBackup.addEventListener("click", async () => {
+  if (!(await requestPersonalPinAccess())) return;
+  window.location.href = `/api/backup?personalToken=${encodeURIComponent(personalToken)}`;
 });
 
 serverBackup.addEventListener("click", async () => {
   backupStatus.textContent = "Creating server backup...";
   try {
+    if (!(await requestPersonalPinAccess())) return;
     const result = await api("/api/backups", { method: "POST" });
     backupStatus.textContent = `Saved ${result.name}.`;
   } catch (error) {
@@ -485,10 +534,38 @@ restoreBackupInput.addEventListener("change", async () => {
   const file = restoreBackupInput.files[0];
   restoreBackupInput.value = "";
   try {
+    if (!(await requestPersonalPinAccess())) return;
     await uploadRestore(file);
   } catch (error) {
     backupStatus.textContent = error.message;
   }
+});
+
+pinForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const pin = personalPin.value.trim();
+  if (!/^\d{4}$/.test(pin)) {
+    pinError.textContent = "Enter exactly 4 digits.";
+    return;
+  }
+  try {
+    const result = await api(pinMode === "set" ? "/api/personal-pin" : "/api/personal-pin/unlock", {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    });
+    personalToken = result.token;
+    pinDialog.close();
+    await loadJournal();
+  } catch (error) {
+    pinError.textContent = error.message;
+  }
+});
+
+useWorkInstead.addEventListener("click", async () => {
+  personalToken = "";
+  activeContext = "work";
+  pinDialog.close();
+  await loadJournal();
 });
 
 (async function boot() {

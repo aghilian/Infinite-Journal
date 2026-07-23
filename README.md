@@ -19,6 +19,7 @@ Phase 1 private daily journaling app.
 - Restore notes and images from a backup zip.
 - Security headers, session cleanup, and login throttling.
 - Personal and Work contexts with distinct themes and filtered note history.
+- Personal space requires a 4-digit PIN on each fresh app open or switch from Work.
 
 ## Local Run
 

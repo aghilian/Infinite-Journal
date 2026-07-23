@@ -512,6 +512,20 @@ dialog::backdrop {
   color: var(--muted);
 }
 
+.pin-form {
+  width: min(380px, calc(100vw - 32px));
+}
+
+.pin-form h2 {
+  font-size: 1.6rem;
+}
+
+#personalPin {
+  font-size: 1.6rem;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+
 @media (max-width: 680px) {
   .topbar {
     align-items: flex-start;

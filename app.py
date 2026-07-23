@@ -61,6 +61,9 @@ ALLOWED_TAGS = {
 VOID_TAGS = {"br", "img"}
 LOGIN_ATTEMPTS = {}
 CONTEXTS = {"personal", "work"}
+PERSONAL_PIN_TOKENS = {}
+PIN_ATTEMPTS = {}
+PIN_TOKEN_SECONDS = 30 * 60
 
 
 def utc_now():
@@ -168,6 +171,13 @@ def normalize_context(value):
     if context not in CONTEXTS:
         raise ValueError("Invalid context")
     return context
+
+
+def validate_pin(pin):
+    value = str(pin or "")
+    if not re.fullmatch(r"\d{4}", value):
+        raise ValueError("PIN must be exactly 4 digits")
+    return value
 
 
 def validate_date(value):
@@ -294,6 +304,10 @@ def verify_password(password, salt_b64, digest_b64):
     return hmac.compare_digest(candidate, digest_b64)
 
 
+def personal_token_digest(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def init_db():
     with db() as conn:
         conn.executescript(
@@ -303,6 +317,8 @@ def init_db():
                 username TEXT NOT NULL UNIQUE,
                 salt TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
+                pin_salt TEXT,
+                pin_hash TEXT,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sessions (
@@ -358,6 +374,11 @@ def init_db():
                 )
             conn.execute("DROP TABLE notes_legacy")
             conn.execute("CREATE INDEX idx_notes_date_context ON notes (note_date, context)")
+        user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "pin_salt" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN pin_salt TEXT")
+        if "pin_hash" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN pin_hash TEXT")
         user_count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
         if user_count == 0:
             username = os.environ.get("THEJOURNAL_USER", "admin")
@@ -459,6 +480,31 @@ class JournalHandler(BaseHTTPRequestHandler):
             ).fetchone()
             return dict(row) if row else None
 
+    def personal_pin_is_set(self, user_id):
+        with db() as conn:
+            row = conn.execute("SELECT pin_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+        return bool(row and row["pin_hash"])
+
+    def personal_token_valid(self, user_id):
+        query = parse_qs(urlparse(self.path).query)
+        token = self.headers.get("X-Personal-Token", "") or (query.get("personalToken") or [""])[0]
+        if not token:
+            return False
+        digest = personal_token_digest(token)
+        expiry = PERSONAL_PIN_TOKENS.get((user_id, digest), 0)
+        if expiry <= time.time():
+            PERSONAL_PIN_TOKENS.pop((user_id, digest), None)
+            return False
+        return True
+
+    def require_personal_access(self, user, context):
+        if context != "personal" or not self.personal_pin_is_set(user["id"]):
+            return True
+        if self.personal_token_valid(user["id"]):
+            return True
+        self.send_json({"error": "Personal PIN required", "pinRequired": True}, HTTPStatus.LOCKED)
+        return False
+
     def require_user(self):
         user = self.current_user()
         if not user:
@@ -495,6 +541,11 @@ class JournalHandler(BaseHTTPRequestHandler):
         if path == "/api/me":
             user = self.current_user()
             self.send_json({"authenticated": bool(user), "user": user})
+            return
+        if path == "/api/personal-pin":
+            user = self.require_user()
+            if user:
+                self.personal_pin_status(user)
             return
         if path == "/api/journal":
             user = self.require_user()
@@ -555,6 +606,14 @@ class JournalHandler(BaseHTTPRequestHandler):
                 user = self.require_user()
                 if user:
                     self.change_password(user["id"])
+            elif path == "/api/personal-pin":
+                user = self.require_user()
+                if user:
+                    self.set_personal_pin(user)
+            elif path == "/api/personal-pin/unlock":
+                user = self.require_user()
+                if user:
+                    self.unlock_personal_pin(user)
             elif path == "/api/assets":
                 user = self.require_user()
                 if user:
@@ -655,6 +714,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         current_day = today_key()
         query = parse_qs(urlparse(self.path).query)
         context = normalize_context((query.get("context") or ["personal"])[0])
+        user = self.current_user()
+        if user and not self.require_personal_access(user, context):
+            return
         with db() as conn:
             today = conn.execute(
                 "SELECT * FROM notes WHERE note_date = ? AND context = ?",
@@ -689,6 +751,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         content = sanitize_note(str(payload.get("content", "")))
         tags = normalize_tags(payload.get("tags", ""))
         context = normalize_context(payload.get("context", "personal"))
+        user = self.current_user()
+        if user and not self.require_personal_access(user, context):
+            return
         current_day = today_key()
         updated_at = utc_now().isoformat()
         with db() as conn:
@@ -709,6 +774,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         note_date = validate_date((query.get("date") or [""])[0])
         context = normalize_context((query.get("context") or ["personal"])[0])
+        user = self.current_user()
+        if user and not self.require_personal_access(user, context):
+            return
         with db() as conn:
             row = conn.execute(
                 "SELECT note_date, context, content, tags, updated_at FROM notes WHERE note_date = ? AND context = ?",
@@ -721,6 +789,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         term = str((query.get("q") or [""])[0]).strip()
         tag = normalize_tags((query.get("tag") or [""])[0])
         context = normalize_context((query.get("context") or ["personal"])[0])
+        user = self.current_user()
+        if user and not self.require_personal_access(user, context):
+            return
         if len(term) < 2 and not tag:
             self.send_json({"results": []})
             return
@@ -767,6 +838,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         end = (query.get("to") or [""])[0]
         file_format = (query.get("format") or ["html"])[0].lower()
         context = normalize_context((query.get("context") or ["personal"])[0])
+        user = self.current_user()
+        if user and not self.require_personal_access(user, context):
+            return
         if start:
             validate_date(start)
         if end:
@@ -821,6 +895,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def download_backup(self):
+        user = self.current_user()
+        if user and not self.require_personal_access(user, "personal"):
+            return
         body = create_backup_bytes()
         filename = f"the-journal-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
         self.send_download(body, filename, "application/zip")
@@ -834,10 +911,16 @@ class JournalHandler(BaseHTTPRequestHandler):
         self.send_json({"backups": backups[:14]})
 
     def create_server_backup(self):
+        user = self.current_user()
+        if user and not self.require_personal_access(user, "personal"):
+            return
         path = write_server_backup()
         self.send_json({"ok": True, "name": path.name, "size": path.stat().st_size})
 
     def restore_backup(self):
+        user = self.current_user()
+        if user and not self.require_personal_access(user, "personal"):
+            return
         payload = self.read_json()
         data_url = str(payload.get("dataUrl", ""))
         match = re.match(r"^data:(?:application/(?:zip|x-zip-compressed)|application/octet-stream);base64,(.+)$", data_url, re.DOTALL)
@@ -868,6 +951,46 @@ class JournalHandler(BaseHTTPRequestHandler):
         path = ASSET_DIR / filename
         path.write_bytes(raw)
         self.send_json({"ok": True, "url": f"/assets/{filename}"})
+
+    def personal_pin_status(self, user):
+        self.send_json({"isSet": self.personal_pin_is_set(user["id"])})
+
+    def set_personal_pin(self, user):
+        payload = self.read_json()
+        pin = validate_pin(payload.get("pin"))
+        salt, digest = password_hash(pin)
+        with db() as conn:
+            conn.execute(
+                "UPDATE users SET pin_salt = ?, pin_hash = ? WHERE id = ?",
+                (salt, digest, user["id"]),
+            )
+        token = secrets.token_urlsafe(24)
+        PERSONAL_PIN_TOKENS[(user["id"], personal_token_digest(token))] = time.time() + PIN_TOKEN_SECONDS
+        self.send_json({"ok": True, "token": token})
+
+    def unlock_personal_pin(self, user):
+        payload = self.read_json()
+        pin = validate_pin(payload.get("pin"))
+        rate_key = f"{self.client_address[0]}:{user['id']}:pin"
+        now = time.time()
+        attempts = [stamp for stamp in PIN_ATTEMPTS.get(rate_key, []) if now - stamp < 900]
+        if len(attempts) >= 8:
+            self.send_json({"error": "Too many PIN attempts. Try again later."}, HTTPStatus.TOO_MANY_REQUESTS)
+            return
+        with db() as conn:
+            row = conn.execute("SELECT pin_salt, pin_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if not row or not row["pin_hash"]:
+            self.send_json({"error": "Personal PIN is not set"}, HTTPStatus.BAD_REQUEST)
+            return
+        if not verify_password(pin, row["pin_salt"], row["pin_hash"]):
+            attempts.append(now)
+            PIN_ATTEMPTS[rate_key] = attempts
+            self.send_json({"error": "Invalid PIN"}, HTTPStatus.UNAUTHORIZED)
+            return
+        PIN_ATTEMPTS.pop(rate_key, None)
+        token = secrets.token_urlsafe(24)
+        PERSONAL_PIN_TOKENS[(user["id"], personal_token_digest(token))] = time.time() + PIN_TOKEN_SECONDS
+        self.send_json({"ok": True, "token": token})
 
     def change_password(self, user_id):
         payload = self.read_json()
