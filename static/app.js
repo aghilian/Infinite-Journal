@@ -561,6 +561,10 @@ pinForm.addEventListener("submit", async (event) => {
   }
 });
 
+personalPin.addEventListener("input", () => {
+  personalPin.value = personalPin.value.replace(/\D/g, "").slice(0, 4);
+});
+
 useWorkInstead.addEventListener("click", async () => {
   personalToken = "";
   activeContext = "work";

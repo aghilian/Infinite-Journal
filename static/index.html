@@ -147,12 +147,23 @@
     </dialog>
 
     <dialog id="pinDialog">
-      <form id="pinForm" method="dialog" class="dialog-form pin-form">
+      <form id="pinForm" method="dialog" class="dialog-form pin-form" autocomplete="off">
         <p class="eyebrow">Personal space</p>
         <h2 id="pinTitle">Enter PIN</h2>
         <label>
           4-digit PIN
-          <input id="personalPin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{4}" maxlength="4" required />
+          <input
+            id="personalPin"
+            name="journal-pin-code"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            pattern="[0-9]{4}"
+            maxlength="4"
+            data-lpignore="true"
+            data-1p-ignore="true"
+            required
+          />
         </label>
         <p id="pinError" class="error" role="alert"></p>
         <div class="dialog-actions">
