@@ -38,6 +38,7 @@ def archive_bytes():
         "static/index.html",
         "static/styles.css",
         "static/app.js",
+        "static/favicon.png",
     ]
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         for name in include:

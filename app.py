@@ -532,6 +532,9 @@ class JournalHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self.send_text("ok")
             return
+        if path == "/favicon.ico":
+            self.serve_static("favicon.png")
+            return
         if path.startswith("/static/"):
             self.serve_static(path.removeprefix("/static/"))
             return
@@ -589,6 +592,12 @@ class JournalHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
             return
+        if path == "/favicon.ico":
+            self.send_static_head("favicon.png")
+            return
+        if path.startswith("/static/"):
+            self.send_static_head(path.removeprefix("/static/"))
+            return
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -638,20 +647,36 @@ class JournalHandler(BaseHTTPRequestHandler):
         self.send_text(content, content_type="text/html; charset=utf-8")
 
     def serve_static(self, name):
-        safe_name = Path(name).name
-        path = STATIC_DIR / safe_name
-        if not path.exists():
+        path = self.static_path(name)
+        if not path:
             self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             return
-        content_types = {
-            ".css": "text/css; charset=utf-8",
-            ".js": "text/javascript; charset=utf-8",
-            ".ico": "image/x-icon",
-        }
-        self.send_text(
-            path.read_text(encoding="utf-8"),
-            content_type=content_types.get(path.suffix, "text/plain; charset=utf-8"),
-        )
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        body = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_static_head(self, name):
+        path = self.static_path(name)
+        if not path:
+            self.send_response(HTTPStatus.NOT_FOUND)
+            self.end_headers()
+            return
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.end_headers()
+
+    def static_path(self, name):
+        safe_name = Path(name).name
+        path = STATIC_DIR / safe_name
+        if safe_name != name or not path.exists() or not path.is_file():
+            return None
+        return path
 
     def serve_asset(self, name):
         safe_name = Path(name).name
