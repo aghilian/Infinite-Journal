@@ -14,6 +14,7 @@ const contextLabel = document.querySelector("#contextLabel");
 const toolbar = document.querySelector(".editor-toolbar");
 const imageButton = document.querySelector("#imageButton");
 const imageInput = document.querySelector("#imageInput");
+const soundToggle = document.querySelector("#soundToggle");
 const todayTags = document.querySelector("#todayTags");
 const searchForm = document.querySelector("#searchForm");
 const searchInput = document.querySelector("#searchInput");
@@ -41,6 +42,9 @@ let saveTimer = null;
 let lastSavedContent = "";
 let saving = false;
 let activeContext = localStorage.getItem("journalContext") || "personal";
+let soundMuted = localStorage.getItem("typewriterMuted") === "true";
+let audioContext = null;
+let lastKeySoundAt = 0;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -92,6 +96,37 @@ function setTheme(context) {
   personalMode.classList.toggle("active", activeContext === "personal");
   workMode.classList.toggle("active", activeContext === "work");
   contextLabel.textContent = activeContext === "work" ? "Work Journal" : "Personal Journal";
+}
+
+function setSoundMuted(muted) {
+  soundMuted = Boolean(muted);
+  localStorage.setItem("typewriterMuted", String(soundMuted));
+  soundToggle.checked = !soundMuted;
+}
+
+function playTypewriterSound(key) {
+  if (soundMuted || !key || key.length !== 1) return;
+  const now = performance.now();
+  if (now - lastKeySoundAt < 24) return;
+  lastKeySoundAt = now;
+  audioContext = audioContext || new AudioContext();
+  const duration = 0.035;
+  const start = audioContext.currentTime;
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const filter = audioContext.createBiquadFilter();
+  oscillator.type = "square";
+  oscillator.frequency.value = 130 + Math.random() * 80;
+  filter.type = "lowpass";
+  filter.frequency.value = 850;
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(0.045, start + 0.004);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration);
 }
 
 function renderOlder(notes) {
@@ -306,8 +341,16 @@ loginForm.addEventListener("submit", async (event) => {
 
 todayEditor.addEventListener("input", scheduleSave);
 todayEditor.addEventListener("blur", saveToday);
+todayEditor.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  playTypewriterSound(event.key);
+});
 todayTags.addEventListener("input", scheduleSave);
 todayTags.addEventListener("blur", saveToday);
+
+soundToggle.addEventListener("change", () => {
+  setSoundMuted(!soundToggle.checked);
+});
 
 toolbar.addEventListener("click", (event) => {
   const button = event.target.closest("[data-command]");
@@ -450,6 +493,7 @@ restoreBackupInput.addEventListener("change", async () => {
 
 (async function boot() {
   setTheme(activeContext);
+  setSoundMuted(soundMuted);
   try {
     const me = await api("/api/me");
     if (me.authenticated) {
