@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Journal</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main id="loginView" class="login-shell" hidden>
+      <form id="loginForm" class="login-panel">
+        <p class="eyebrow">Private journal</p>
+        <h1>The Journal</h1>
+        <label>
+          Username
+          <input id="username" name="username" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit">Sign in</button>
+        <p id="loginError" class="error" role="alert"></p>
+      </form>
+    </main>
+
+    <main id="journalView" class="journal-shell" hidden>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">The Journal</p>
+          <h1 id="todayTitle">Today</h1>
+        </div>
+        <div class="top-actions">
+          <span id="saveState" class="save-state">Saved</span>
+          <button id="settingsButton" class="ghost" type="button">Password</button>
+          <button id="logoutButton" class="ghost" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <section class="today-sheet" aria-label="Today's journal">
+        <textarea
+          id="todayEditor"
+          spellcheck="true"
+          placeholder="Start writing..."
+          aria-label="Today's journal entry"
+        ></textarea>
+      </section>
+
+      <section class="history" aria-label="Older notes">
+        <h2>Older Notes</h2>
+        <div id="olderNotes"></div>
+      </section>
+    </main>
+
+    <dialog id="passwordDialog">
+      <form id="passwordForm" method="dialog" class="dialog-form">
+        <h2>Change Password</h2>
+        <label>
+          Current password
+          <input id="currentPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <label>
+          New password
+          <input id="newPassword" type="password" autocomplete="new-password" minlength="12" required />
+        </label>
+        <p id="passwordError" class="error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancelPassword" class="ghost" type="button">Cancel</button>
+          <button type="submit">Update</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

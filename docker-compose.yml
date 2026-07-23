@@ -1,0 +1,23 @@
+services:
+  thejournal:
+    build: .
+    container_name: thejournal
+    restart: unless-stopped
+    environment:
+      PORT: "8000"
+      TZ: America/Toronto
+      THEJOURNAL_DATA_DIR: /data
+      THEJOURNAL_USER: admin
+      THEJOURNAL_PASSWORD: ${THEJOURNAL_PASSWORD}
+      THEJOURNAL_COOKIE_SECURE: "true"
+    volumes:
+      - thejournal_data:/data
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.thejournal.entrypoints: websecure
+      traefik.http.routers.thejournal.rule: Host(`thejournal.opensails.ca`)
+      traefik.http.routers.thejournal.tls.certresolver: letsencrypt
+      traefik.http.services.thejournal.loadbalancer.server.port: "8000"
+
+volumes:
+  thejournal_data:
