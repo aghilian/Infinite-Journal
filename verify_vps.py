@@ -1,6 +1,8 @@
 import os
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".tmp_vendor"))
+
 import paramiko
 
 
@@ -36,12 +38,8 @@ commands = [
         f"-d '{{\"username\":\"admin\",\"password\":\"{APP_PASSWORD}\"}}' "
         "https://thejournal.opensails.ca/api/login >/dev/null && "
         "curl -ksS --resolve thejournal.opensails.ca:443:127.0.0.1 "
-        "-b $tmp -H 'Content-Type: application/json' "
-        "-d '{\"content\":\"Phase 1 routed smoke test\"}' "
-        "https://thejournal.opensails.ca/api/journal/today >/dev/null && "
-        "curl -ksS --resolve thejournal.opensails.ca:443:127.0.0.1 "
         "-b $tmp https://thejournal.opensails.ca/api/journal | "
-        "python3 -c \"import sys,json; d=json.load(sys.stdin); print(d['today']['content'])\"; "
+        "python3 -c \"import sys,json; d=json.load(sys.stdin); print(d['today']['date'], len(d['today']['content']))\"; "
         "rm -f $tmp"
     ),
     "getent hosts thejournal.opensails.ca || true",

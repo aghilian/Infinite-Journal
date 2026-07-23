@@ -59,10 +59,15 @@ def main():
     run(client, f"tar -xzf {remote_tar} -C {REMOTE_DIR}")
     run(client, f"rm -f {remote_tar}")
 
-    env_content = f"THEJOURNAL_PASSWORD={initial_password}\n"
-    with sftp.file(f"{REMOTE_DIR}/.env", "w") as remote:
-        remote.write(env_content)
-    run(client, f"chmod 600 {REMOTE_DIR}/.env")
+    env_exists = run(client, f"test -f {REMOTE_DIR}/.env && echo yes || echo no") == "yes"
+    if env_exists:
+        password_message = "password=existing server password preserved"
+    else:
+        env_content = f"THEJOURNAL_PASSWORD={initial_password}\n"
+        with sftp.file(f"{REMOTE_DIR}/.env", "w") as remote:
+            remote.write(env_content)
+        run(client, f"chmod 600 {REMOTE_DIR}/.env")
+        password_message = f"password={initial_password}"
 
     run(
         client,
@@ -81,7 +86,7 @@ def main():
     print(f"container={ps}")
     print(f"health={health}")
     print("username=admin")
-    print(f"password={initial_password}")
+    print(password_message)
 
     sftp.close()
     client.close()
