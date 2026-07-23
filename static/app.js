@@ -186,7 +186,7 @@ function setSoundMuted(muted) {
   soundToggle.checked = !soundMuted;
 }
 
-function playTypewriterSound(key) {
+async function playTypewriterSound(key) {
   if (soundMuted || !key || key.length !== 1) return;
   const now = performance.now();
   if (now - lastKeySoundAt < 24) return;
@@ -194,18 +194,20 @@ function playTypewriterSound(key) {
   const AudioEngine = window.AudioContext || window.webkitAudioContext;
   if (!AudioEngine) return;
   audioContext = audioContext || new AudioEngine();
-  if (audioContext.state === "suspended") audioContext.resume();
-  const duration = 0.035;
+  if (audioContext.state === "suspended") {
+    await audioContext.resume();
+  }
+  const duration = 0.045;
   const start = audioContext.currentTime;
   const oscillator = audioContext.createOscillator();
   const gain = audioContext.createGain();
   const filter = audioContext.createBiquadFilter();
   oscillator.type = "square";
-  oscillator.frequency.value = 130 + Math.random() * 80;
+  oscillator.frequency.value = 180 + Math.random() * 120;
   filter.type = "lowpass";
-  filter.frequency.value = 850;
+  filter.frequency.value = 1400;
   gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.045, start + 0.004);
+  gain.gain.exponentialRampToValueAtTime(0.12, start + 0.003);
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
   oscillator.connect(filter);
   filter.connect(gain);
@@ -444,13 +446,14 @@ todayEditor.addEventListener("input", scheduleSave);
 todayEditor.addEventListener("blur", saveToday);
 todayEditor.addEventListener("keydown", (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
-  playTypewriterSound(event.key);
+  playTypewriterSound(event.key).catch(() => {});
 });
 todayTags.addEventListener("input", scheduleSave);
 todayTags.addEventListener("blur", saveToday);
 
 soundToggle.addEventListener("change", () => {
   setSoundMuted(!soundToggle.checked);
+  if (!soundMuted) playTypewriterSound(" ").catch(() => {});
 });
 
 toolbar.addEventListener("click", (event) => {
