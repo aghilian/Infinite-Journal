@@ -35,14 +35,13 @@ def archive_bytes():
         "Dockerfile",
         "docker-compose.yml",
         "README.md",
-        "static/index.html",
-        "static/styles.css",
-        "static/app.js",
-        "static/favicon.png",
     ]
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
         for name in include:
             tar.add(ROOT / name, arcname=name)
+        for path in (ROOT / "static").iterdir():
+            if path.is_file():
+                tar.add(path, arcname=f"static/{path.name}")
     buffer.seek(0)
     return buffer
 

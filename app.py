@@ -533,7 +533,7 @@ class JournalHandler(BaseHTTPRequestHandler):
             self.send_text("ok")
             return
         if path == "/favicon.ico":
-            self.serve_static("favicon.png")
+            self.serve_static("favicon.ico")
             return
         if path.startswith("/static/"):
             self.serve_static(path.removeprefix("/static/"))
@@ -593,7 +593,7 @@ class JournalHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/favicon.ico":
-            self.send_static_head("favicon.png")
+            self.send_static_head("favicon.ico")
             return
         if path.startswith("/static/"):
             self.send_static_head(path.removeprefix("/static/"))
