@@ -15,6 +15,9 @@ Phase 1 private daily journaling app.
 - Search across notes and tags.
 - Date jump for opening a specific day.
 - HTML and Markdown export.
+- Downloadable and server-side zip backups.
+- Restore notes and images from a backup zip.
+- Security headers, session cleanup, and login throttling.
 
 ## Local Run
 

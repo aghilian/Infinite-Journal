@@ -2,13 +2,16 @@ import base64
 import hashlib
 import hmac
 import html
+import io
 import json
 import mimetypes
 import os
 import re
 import secrets
 import sqlite3
+import threading
 import time
+import zipfile
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from http import HTTPStatus
@@ -22,11 +25,14 @@ APP_NAME = "The Journal"
 DATA_DIR = Path(os.environ.get("THEJOURNAL_DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "journal.db"
 ASSET_DIR = DATA_DIR / "assets"
+BACKUP_DIR = DATA_DIR / "backups"
 STATIC_DIR = Path(__file__).parent / "static"
 SESSION_DAYS = 14
 PBKDF2_ITERATIONS = 240_000
 MAX_JSON_BYTES = 12_000_000
 MAX_ASSET_BYTES = 8_000_000
+MAX_BACKUP_BYTES = 100_000_000
+BACKUP_INTERVAL_SECONDS = 24 * 60 * 60
 ALLOWED_IMAGE_TYPES = {
     "image/gif": ".gif",
     "image/jpeg": ".jpg",
@@ -53,6 +59,7 @@ ALLOWED_TAGS = {
     "ul",
 }
 VOID_TAGS = {"br", "img"}
+LOGIN_ATTEMPTS = {}
 
 
 def utc_now():
@@ -173,6 +180,99 @@ def note_to_markdown(row):
     return "\n".join(lines).strip() + "\n"
 
 
+def backup_payload():
+    with db() as conn:
+        notes = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT note_date, content, tags, updated_at FROM notes ORDER BY note_date ASC"
+            ).fetchall()
+        ]
+    return {
+        "app": APP_NAME,
+        "version": 1,
+        "created_at": utc_now().isoformat(),
+        "notes": notes,
+    }
+
+
+def create_backup_bytes():
+    buffer = io.BytesIO()
+    payload = backup_payload()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("journal.json", json.dumps(payload, indent=2))
+        if ASSET_DIR.exists():
+            for asset in ASSET_DIR.iterdir():
+                if asset.is_file() and re.match(r"^[a-f0-9]{32}\.(gif|jpg|png|webp)$", asset.name):
+                    archive.write(asset, f"assets/{asset.name}")
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def write_server_backup():
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = BACKUP_DIR / f"the-journal-backup-{stamp}.zip"
+    path.write_bytes(create_backup_bytes())
+    backups = sorted(BACKUP_DIR.glob("the-journal-backup-*.zip"), key=lambda item: item.stat().st_mtime)
+    for old in backups[:-14]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+def start_backup_scheduler():
+    def loop():
+        while True:
+            time.sleep(BACKUP_INTERVAL_SECONDS)
+            try:
+                write_server_backup()
+            except Exception as exc:
+                print(f"scheduled backup failed: {exc}")
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+
+
+def import_backup(raw):
+    with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+        names = set(archive.namelist())
+        if "journal.json" not in names:
+            raise ValueError("Backup is missing journal.json")
+        payload = json.loads(archive.read("journal.json").decode("utf-8"))
+        if payload.get("app") != APP_NAME:
+            raise ValueError("Backup does not look like a The Journal backup")
+        notes = payload.get("notes") or []
+        restored_assets = 0
+        ASSET_DIR.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            if not name.startswith("assets/"):
+                continue
+            filename = Path(name).name
+            if re.match(r"^[a-f0-9]{32}\.(gif|jpg|png|webp)$", filename):
+                (ASSET_DIR / filename).write_bytes(archive.read(name))
+                restored_assets += 1
+        restored_notes = 0
+        with db() as conn:
+            for note in notes:
+                note_date = validate_date(note.get("note_date"))
+                content = sanitize_note(str(note.get("content") or ""))
+                tags = normalize_tags(note.get("tags") or "")
+                updated_at = str(note.get("updated_at") or utc_now().isoformat())
+                conn.execute(
+                    """
+                    INSERT INTO notes (note_date, content, tags, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(note_date) DO UPDATE SET
+                        content = excluded.content,
+                        tags = excluded.tags,
+                        updated_at = excluded.updated_at
+                    """,
+                    (note_date, content, tags, updated_at),
+                )
+                restored_notes += 1
+    return {"notes": restored_notes, "assets": restored_assets}
+
+
 def password_hash(password, salt=None):
     salt = salt or secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
@@ -245,6 +345,17 @@ class JournalHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print("%s - - [%s] %s" % (self.client_address[0], self.log_date_time_string(), fmt % args))
 
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+        )
+        super().end_headers()
+
     def send_json(self, payload, status=HTTPStatus.OK):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -266,6 +377,15 @@ class JournalHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "private, max-age=31536000")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_download(self, body, filename, content_type):
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -351,6 +471,16 @@ class JournalHandler(BaseHTTPRequestHandler):
             if user:
                 self.export_notes()
             return
+        if path == "/api/backup":
+            user = self.require_user()
+            if user:
+                self.download_backup()
+            return
+        if path == "/api/backups":
+            user = self.require_user()
+            if user:
+                self.list_backups()
+            return
         self.serve_index()
 
     def do_HEAD(self):
@@ -383,6 +513,14 @@ class JournalHandler(BaseHTTPRequestHandler):
                 user = self.require_user()
                 if user:
                     self.upload_asset()
+            elif path == "/api/backups":
+                user = self.require_user()
+                if user:
+                    self.create_server_backup()
+            elif path == "/api/restore":
+                user = self.require_user()
+                if user:
+                    self.restore_backup()
             else:
                 self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -424,11 +562,22 @@ class JournalHandler(BaseHTTPRequestHandler):
         payload = self.read_json()
         username = str(payload.get("username", "")).strip()
         password = str(payload.get("password", ""))
+        rate_key = f"{self.client_address[0]}:{username}"
+        attempts = LOGIN_ATTEMPTS.get(rate_key, [])
+        now = time.time()
+        attempts = [stamp for stamp in attempts if now - stamp < 900]
+        if len(attempts) >= 5:
+            self.send_json({"error": "Too many failed attempts. Try again later."}, HTTPStatus.TOO_MANY_REQUESTS)
+            return
         with db() as conn:
             row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
             if not row or not verify_password(password, row["salt"], row["password_hash"]):
+                attempts.append(now)
+                LOGIN_ATTEMPTS[rate_key] = attempts
                 self.send_json({"error": "Invalid username or password"}, HTTPStatus.UNAUTHORIZED)
                 return
+            LOGIN_ATTEMPTS.pop(rate_key, None)
+            conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (int(time.time()),))
             token = secrets.token_urlsafe(36)
             expires_at = int((utc_now() + timedelta(days=SESSION_DAYS)).timestamp())
             conn.execute(
@@ -614,6 +763,37 @@ class JournalHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def download_backup(self):
+        body = create_backup_bytes()
+        filename = f"the-journal-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        self.send_download(body, filename, "application/zip")
+
+    def list_backups(self):
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        backups = []
+        for path in sorted(BACKUP_DIR.glob("the-journal-backup-*.zip"), reverse=True):
+            stat = path.stat()
+            backups.append({"name": path.name, "size": stat.st_size, "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat()})
+        self.send_json({"backups": backups[:14]})
+
+    def create_server_backup(self):
+        path = write_server_backup()
+        self.send_json({"ok": True, "name": path.name, "size": path.stat().st_size})
+
+    def restore_backup(self):
+        payload = self.read_json()
+        data_url = str(payload.get("dataUrl", ""))
+        match = re.match(r"^data:(?:application/(?:zip|x-zip-compressed)|application/octet-stream);base64,(.+)$", data_url, re.DOTALL)
+        if not match:
+            self.send_json({"error": "Upload a The Journal .zip backup"}, HTTPStatus.BAD_REQUEST)
+            return
+        raw = base64.b64decode(match.group(1), validate=True)
+        if len(raw) > MAX_BACKUP_BYTES:
+            self.send_json({"error": "Backup must be 100 MB or smaller"}, HTTPStatus.BAD_REQUEST)
+            return
+        result = import_backup(raw)
+        self.send_json({"ok": True, **result})
+
     def upload_asset(self):
         payload = self.read_json()
         data_url = str(payload.get("dataUrl", ""))
@@ -655,6 +835,11 @@ class JournalHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     init_db()
+    try:
+        write_server_backup()
+    except Exception as exc:
+        print(f"startup backup failed: {exc}")
+    start_backup_scheduler()
     port = int(os.environ.get("PORT", "8000"))
     server = ThreadingHTTPServer(("0.0.0.0", port), JournalHandler)
     print(f"{APP_NAME} listening on :{port}")

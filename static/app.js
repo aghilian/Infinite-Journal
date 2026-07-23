@@ -28,6 +28,11 @@ const passwordDialog = document.querySelector("#passwordDialog");
 const passwordForm = document.querySelector("#passwordForm");
 const passwordError = document.querySelector("#passwordError");
 const cancelPassword = document.querySelector("#cancelPassword");
+const downloadBackup = document.querySelector("#downloadBackup");
+const serverBackup = document.querySelector("#serverBackup");
+const restoreBackupButton = document.querySelector("#restoreBackupButton");
+const restoreBackupInput = document.querySelector("#restoreBackupInput");
+const backupStatus = document.querySelector("#backupStatus");
 
 let saveTimer = null;
 let lastSavedContent = "";
@@ -235,6 +240,18 @@ function readFileAsDataUrl(file) {
   });
 }
 
+async function uploadRestore(file) {
+  if (!file) return;
+  backupStatus.textContent = "Restoring backup...";
+  const dataUrl = await readFileAsDataUrl(file);
+  const result = await api("/api/restore", {
+    method: "POST",
+    body: JSON.stringify({ dataUrl }),
+  });
+  backupStatus.textContent = `Restored ${result.notes} notes and ${result.assets} images.`;
+  await loadJournal();
+}
+
 async function uploadImage(file) {
   if (!file.type.startsWith("image/")) return;
   if (file.size > 8_000_000) {
@@ -354,6 +371,7 @@ logoutButton.addEventListener("click", async () => {
 
 settingsButton.addEventListener("click", () => {
   passwordError.textContent = "";
+  backupStatus.textContent = "";
   passwordDialog.showModal();
 });
 
@@ -375,6 +393,32 @@ passwordForm.addEventListener("submit", async (event) => {
     showLogin();
   } catch (error) {
     passwordError.textContent = error.message;
+  }
+});
+
+downloadBackup.addEventListener("click", () => {
+  window.location.href = "/api/backup";
+});
+
+serverBackup.addEventListener("click", async () => {
+  backupStatus.textContent = "Creating server backup...";
+  try {
+    const result = await api("/api/backups", { method: "POST" });
+    backupStatus.textContent = `Saved ${result.name}.`;
+  } catch (error) {
+    backupStatus.textContent = error.message;
+  }
+});
+
+restoreBackupButton.addEventListener("click", () => restoreBackupInput.click());
+
+restoreBackupInput.addEventListener("change", async () => {
+  const file = restoreBackupInput.files[0];
+  restoreBackupInput.value = "";
+  try {
+    await uploadRestore(file);
+  } catch (error) {
+    backupStatus.textContent = error.message;
   }
 });
 

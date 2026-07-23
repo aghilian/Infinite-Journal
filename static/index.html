@@ -124,6 +124,16 @@
           <button type="submit">Update</button>
         </div>
       </form>
+      <section class="dialog-section">
+        <h2>Backups</h2>
+        <div class="backup-actions">
+          <button id="downloadBackup" type="button">Download</button>
+          <button id="serverBackup" class="ghost" type="button">Server backup</button>
+          <button id="restoreBackupButton" class="ghost" type="button">Restore</button>
+          <input id="restoreBackupInput" type="file" accept=".zip,application/zip" hidden />
+        </div>
+        <p id="backupStatus" class="dialog-note"></p>
+      </section>
     </dialog>
 
     <script src="/static/app.js"></script>
