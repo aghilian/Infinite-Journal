@@ -6,7 +6,7 @@
     <title>The Journal</title>
     <link rel="icon" href="/favicon.ico?v=5" sizes="any" />
     <link rel="icon" type="image/png" href="/static/favicon.png?v=5" />
-    <link rel="stylesheet" href="/static/styles.css?v=8" />
+    <link rel="stylesheet" href="/static/styles.css?v=9" />
   </head>
   <body>
     <main id="loginView" class="login-shell" hidden>
@@ -102,11 +102,7 @@
       </section>
 
       <section class="today-sheet" aria-label="Today's journal">
-        <p id="contextLabel" class="context-label">Personal Journal</p>
-        <label class="tag-row">
-          Tags
-          <input id="todayTags" placeholder="health, work, idea" />
-        </label>
+        <input id="todayTags" type="hidden" />
         <div
           id="todayEditor"
           contenteditable="true"
@@ -207,6 +203,6 @@
       </form>
     </dialog>
 
-    <script src="/static/app.js?v=8"></script>
+    <script src="/static/app.js?v=9"></script>
   </body>
 </html>

@@ -349,24 +349,6 @@ textarea {
   border-bottom: 1px solid var(--line);
 }
 
-.context-label {
-  width: min(980px, 100%);
-  margin: 0 auto 12px;
-  color: var(--accent-dark);
-  font-weight: 700;
-  text-transform: uppercase;
-  font-size: 0.78rem;
-}
-
-.tag-row {
-  width: min(980px, 100%);
-  margin: 0 auto 22px;
-}
-
-.tag-row input {
-  width: 100%;
-}
-
 #todayEditor {
   width: min(980px, 100%);
   min-height: calc(100vh - 240px);

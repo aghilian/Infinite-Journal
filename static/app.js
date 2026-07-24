@@ -10,7 +10,6 @@ const logoutButton = document.querySelector("#logoutButton");
 const settingsButton = document.querySelector("#settingsButton");
 const personalMode = document.querySelector("#personalMode");
 const workMode = document.querySelector("#workMode");
-const contextLabel = document.querySelector("#contextLabel");
 const toolbar = document.querySelector(".editor-toolbar");
 const collapseButton = document.querySelector("#collapseButton");
 const imageButton = document.querySelector("#imageButton");
@@ -61,6 +60,8 @@ let soundMuted = localStorage.getItem("typewriterMuted") === "true";
 let audioContext = null;
 let keySoundBuffer = null;
 let keySoundPromise = null;
+let enterSoundBuffer = null;
+let enterSoundPromise = null;
 let lastKeySoundAt = 0;
 let personalToken = "";
 let pinMode = "unlock";
@@ -81,6 +82,7 @@ const SOUND_KEYS = new Set([
   "End",
 ]);
 const KEY_SOUND_URL = "/static/typewriter-key.mp3?v=1";
+const ENTER_SOUND_URL = "/static/typewriter-enter.mp3?v=1";
 const KEY_SOUND_GAIN = 3.5;
 
 async function api(path, options = {}) {
@@ -140,7 +142,6 @@ function setTheme(context) {
   document.body.dataset.context = activeContext;
   personalMode.classList.toggle("active", activeContext === "personal");
   workMode.classList.toggle("active", activeContext === "work");
-  contextLabel.textContent = activeContext === "work" ? "Work Journal" : "Personal Journal";
 }
 
 function openPinDialog(mode) {
@@ -222,7 +223,7 @@ async function playTypewriterSound(key) {
   if (audioContext.state === "suspended") {
     await audioContext.resume();
   }
-  const buffer = await loadKeySound();
+  const buffer = await loadTypewriterSound(key === "Enter" ? "enter" : "key");
   const source = audioContext.createBufferSource();
   const gain = audioContext.createGain();
   source.buffer = buffer;
@@ -232,7 +233,20 @@ async function playTypewriterSound(key) {
   source.start();
 }
 
-async function loadKeySound() {
+async function loadTypewriterSound(kind) {
+  if (kind === "enter") {
+    if (enterSoundBuffer) return enterSoundBuffer;
+    if (!enterSoundPromise) {
+      enterSoundPromise = fetch(ENTER_SOUND_URL)
+        .then((response) => {
+          if (!response.ok) throw new Error("Enter sound failed to load");
+          return response.arrayBuffer();
+        })
+        .then((data) => audioContext.decodeAudioData(data));
+    }
+    enterSoundBuffer = await enterSoundPromise;
+    return enterSoundBuffer;
+  }
   if (keySoundBuffer) return keySoundBuffer;
   if (!keySoundPromise) {
     keySoundPromise = fetch(KEY_SOUND_URL)
