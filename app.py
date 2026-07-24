@@ -91,6 +91,7 @@ ALLOWED_TAGS = {
     "b",
     "blockquote",
     "br",
+    "button",
     "details",
     "div",
     "em",
@@ -150,6 +151,14 @@ class NoteSanitizer(HTMLParser):
                 safe_attrs.append(("href", href))
                 safe_attrs.append(("target", "_blank"))
                 safe_attrs.append(("rel", "noreferrer"))
+        elif tag == "button":
+            class_name = attr_map.get("class", "").strip()
+            button_type = attr_map.get("type", "").strip()
+            if class_name == "uncollapse-button":
+                safe_attrs.append(("class", class_name))
+                safe_attrs.append(("type", button_type if button_type == "button" else "button"))
+                safe_attrs.append(("title", attr_map.get("title", "Make regular text")[:80]))
+                safe_attrs.append(("aria-label", attr_map.get("aria-label", "Make regular text")[:80]))
         elif tag == "img":
             src = attr_map.get("src", "").strip()
             if src.startswith("/assets/"):

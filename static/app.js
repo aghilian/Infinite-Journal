@@ -457,6 +457,7 @@ async function loadJournal() {
   }
   todayTitle.textContent = formatDate(data.today.date);
   todayEditor.innerHTML = normalizeStoredContent(data.today.content || "");
+  ensureUncollapseButtons();
   todayTags.value = data.today.tags || "";
   lastSavedContent = todayEditor.innerHTML;
   todayTags.dataset.saved = todayTags.value;
@@ -532,6 +533,7 @@ function collapseSelectedSection() {
   details.open = true;
   const summary = document.createElement("summary");
   summary.textContent = title.trim() || titleFromSelection(selectedText);
+  details.append(summary, createUncollapseButton());
   const body = document.createElement("div");
   if ([...fragment.childNodes].some((node) => node.nodeType === Node.ELEMENT_NODE)) {
     body.append(fragment);
@@ -540,13 +542,44 @@ function collapseSelectedSection() {
     paragraph.append(fragment);
     body.append(paragraph);
   }
-  details.append(summary, body);
+  details.append(body);
   range.insertNode(details);
   selection.removeAllRanges();
   const nextRange = document.createRange();
   nextRange.selectNodeContents(body);
   nextRange.collapse(false);
   selection.addRange(nextRange);
+  scheduleSave();
+}
+
+function createUncollapseButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "uncollapse-button";
+  button.title = "Make regular text";
+  button.setAttribute("aria-label", "Make regular text");
+  button.textContent = "×";
+  return button;
+}
+
+function ensureUncollapseButtons() {
+  todayEditor.querySelectorAll("details").forEach((details) => {
+    if (!details.querySelector(":scope > .uncollapse-button")) {
+      const summary = details.querySelector(":scope > summary");
+      details.insertBefore(createUncollapseButton(), summary ? summary.nextSibling : details.firstChild);
+    }
+  });
+}
+
+function uncollapseSection(details) {
+  const fragment = document.createDocumentFragment();
+  const bodyNodes = [...details.childNodes].filter(
+    (node) => !(node.nodeType === Node.ELEMENT_NODE && ["SUMMARY", "BUTTON"].includes(node.tagName)),
+  );
+  for (const node of bodyNodes) {
+    fragment.append(node);
+  }
+  details.replaceWith(fragment);
   scheduleSave();
 }
 
@@ -614,6 +647,14 @@ todayEditor.addEventListener("blur", saveToday);
 todayEditor.addEventListener("keydown", (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   playTypewriterSound(event.key).catch(() => {});
+});
+todayEditor.addEventListener("click", (event) => {
+  const button = event.target.closest(".uncollapse-button");
+  if (!button || !todayEditor.contains(button)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const details = button.closest("details");
+  if (details) uncollapseSection(details);
 });
 todayTags.addEventListener("input", scheduleSave);
 todayTags.addEventListener("blur", saveToday);

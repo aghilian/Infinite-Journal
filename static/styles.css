@@ -413,6 +413,7 @@ textarea {
 
 #todayEditor details,
 .note-content details {
+  position: relative;
   margin: 0 0 1rem;
   padding: 10px 14px;
   border: 1px solid var(--mode-line);
@@ -430,6 +431,28 @@ textarea {
 #todayEditor details[open] summary,
 .note-content details[open] summary {
   margin-bottom: 10px;
+}
+
+.uncollapse-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--mode-line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.uncollapse-button:hover {
+  background: var(--mode-line);
+  color: var(--ink);
 }
 
 .history {
