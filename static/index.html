@@ -119,7 +119,7 @@
       </section>
     </main>
 
-    <dialog id="passwordDialog">
+    <dialog id="passwordDialog" class="settings-dialog">
       <form id="passwordForm" method="dialog" class="dialog-form">
         <h2>Change Password</h2>
         <label>
@@ -145,6 +145,35 @@
           <input id="restoreBackupInput" type="file" accept=".zip,application/zip" hidden />
         </div>
         <p id="backupStatus" class="dialog-note"></p>
+      </section>
+      <section class="dialog-section import-section">
+        <h2>Import Notes</h2>
+        <div class="import-controls">
+          <label>
+            Context
+            <select id="importContext">
+              <option value="personal">Personal</option>
+              <option value="work">Work</option>
+            </select>
+          </label>
+          <label>
+            Numeric dates
+            <select id="importDateOrder">
+              <option value="mdy">Month / Day / Year</option>
+              <option value="dmy">Day / Month / Year</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Paste notes
+          <textarea id="importText" rows="9" placeholder="[Jan 5 2024]&#10;Note text...&#10;&#10;2024-02-10&#10;Another note..."></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button id="previewImport" class="ghost" type="button">Preview</button>
+          <button id="commitImport" type="button" disabled>Import</button>
+        </div>
+        <p id="importStatus" class="dialog-note"></p>
+        <div id="importReview" class="import-review" hidden></div>
       </section>
     </dialog>
 

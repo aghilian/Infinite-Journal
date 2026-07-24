@@ -17,6 +17,7 @@ Phase 1 private daily journaling app.
 - HTML and Markdown export.
 - Downloadable and server-side zip backups.
 - Restore notes and images from a backup zip.
+- Paste-import backdated notes with preview, conflict handling, and automatic backup.
 - Security headers, session cleanup, and login throttling.
 - Personal and Work contexts with distinct themes and filtered note history.
 - Personal space requires a 4-digit PIN on each fresh app open, switch from Work, or after 30 minutes idle.

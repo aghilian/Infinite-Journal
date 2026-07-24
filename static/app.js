@@ -37,6 +37,13 @@ const serverBackup = document.querySelector("#serverBackup");
 const restoreBackupButton = document.querySelector("#restoreBackupButton");
 const restoreBackupInput = document.querySelector("#restoreBackupInput");
 const backupStatus = document.querySelector("#backupStatus");
+const importContext = document.querySelector("#importContext");
+const importDateOrder = document.querySelector("#importDateOrder");
+const importText = document.querySelector("#importText");
+const previewImport = document.querySelector("#previewImport");
+const commitImport = document.querySelector("#commitImport");
+const importStatus = document.querySelector("#importStatus");
+const importReview = document.querySelector("#importReview");
 const pinDialog = document.querySelector("#pinDialog");
 const pinForm = document.querySelector("#pinForm");
 const pinTitle = document.querySelector("#pinTitle");
@@ -58,6 +65,7 @@ let personalToken = "";
 let pinMode = "unlock";
 let personalIdleTimer = null;
 let lastPersonalActivityAt = 0;
+let importEntries = [];
 const PERSONAL_IDLE_MS = 30 * 60 * 1000;
 const SOUND_KEYS = new Set([
   "Backspace",
@@ -304,6 +312,56 @@ function renderResults(title, results) {
     resultsList.append(button);
   }
   resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderImportReview(entries) {
+  importEntries = entries.map((entry) => ({ ...entry }));
+  importReview.textContent = "";
+  importReview.hidden = !importEntries.length;
+  commitImport.disabled = !importEntries.some((entry) => entry.date && entry.text && entry.action !== "skip");
+  for (const entry of importEntries) {
+    const row = document.createElement("article");
+    row.className = "import-row";
+    const meta = document.createElement("div");
+    meta.className = "import-meta";
+    const date = document.createElement("input");
+    date.type = "date";
+    date.value = entry.date || "";
+    date.addEventListener("input", () => {
+      entry.date = date.value;
+      commitImport.disabled = !importEntries.some((item) => item.date && item.text && item.action !== "skip");
+    });
+    const context = document.createElement("select");
+    context.innerHTML = '<option value="personal">Personal</option><option value="work">Work</option>';
+    context.value = entry.context || importContext.value;
+    context.addEventListener("change", () => {
+      entry.context = context.value;
+    });
+    const action = document.createElement("select");
+    action.innerHTML = '<option value="append">Append</option><option value="replace">Replace</option><option value="skip">Skip</option>';
+    action.value = entry.action || "skip";
+    action.addEventListener("change", () => {
+      entry.action = action.value;
+      commitImport.disabled = !importEntries.some((item) => item.date && item.text && item.action !== "skip");
+    });
+    meta.append(date, context, action);
+    const text = document.createElement("textarea");
+    text.rows = 4;
+    text.value = entry.text || "";
+    text.addEventListener("input", () => {
+      entry.text = text.value;
+      commitImport.disabled = !importEntries.some((item) => item.date && item.text && item.action !== "skip");
+    });
+    const note = document.createElement("p");
+    note.className = "import-warning";
+    const parts = [];
+    if (entry.rawDate) parts.push(`Read "${entry.rawDate}" as ${entry.date || "unknown date"}.`);
+    if (entry.hasExisting) parts.push("Existing note found.");
+    if (entry.warning) parts.push(entry.warning);
+    note.textContent = parts.join(" ");
+    row.append(meta, text, note);
+    importReview.append(row);
+  }
 }
 
 async function showSelectedNote(date, context = activeContext) {
@@ -572,6 +630,8 @@ logoutButton.addEventListener("click", async () => {
 settingsButton.addEventListener("click", () => {
   passwordError.textContent = "";
   backupStatus.textContent = "";
+  importStatus.textContent = "";
+  importContext.value = activeContext;
   passwordDialog.showModal();
 });
 
@@ -624,6 +684,56 @@ restoreBackupInput.addEventListener("change", async () => {
     await uploadRestore(file);
   } catch (error) {
     backupStatus.textContent = error.message;
+  }
+});
+
+previewImport.addEventListener("click", async () => {
+  importStatus.textContent = "Parsing notes...";
+  importReview.hidden = true;
+  importReview.textContent = "";
+  commitImport.disabled = true;
+  try {
+    if (importContext.value === "personal" && !(await requestPersonalPinAccess())) {
+      importStatus.textContent = "Unlock Personal to preview import.";
+      return;
+    }
+    const result = await api("/api/import/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        text: importText.value,
+        context: importContext.value,
+        dateOrder: importDateOrder.value,
+      }),
+    });
+    renderImportReview(result.entries || []);
+    importStatus.textContent = `Found ${result.importable || 0} importable notes. ${result.warnings || 0} warnings.`;
+  } catch (error) {
+    importStatus.textContent = error.message;
+  }
+});
+
+commitImport.addEventListener("click", async () => {
+  importStatus.textContent = "Importing notes...";
+  commitImport.disabled = true;
+  try {
+    if (importEntries.some((entry) => entry.context === "personal" && entry.action !== "skip") && !(await requestPersonalPinAccess())) {
+      importStatus.textContent = "Unlock Personal to import.";
+      commitImport.disabled = false;
+      return;
+    }
+    const result = await api("/api/import/commit", {
+      method: "POST",
+      body: JSON.stringify({ entries: importEntries }),
+    });
+    importStatus.textContent = `Imported ${result.imported} notes. Appended ${result.appended}, replaced ${result.replaced}, skipped ${result.skipped}. Backup: ${result.backup || "not needed"}.`;
+    importReview.hidden = true;
+    importReview.textContent = "";
+    importEntries = [];
+    importText.value = "";
+    await loadJournal();
+  } catch (error) {
+    importStatus.textContent = error.message;
+    commitImport.disabled = false;
   }
 });
 

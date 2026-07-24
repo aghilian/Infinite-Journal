@@ -32,7 +32,54 @@ PBKDF2_ITERATIONS = 240_000
 MAX_JSON_BYTES = 12_000_000
 MAX_ASSET_BYTES = 8_000_000
 MAX_BACKUP_BYTES = 100_000_000
+MAX_IMPORT_BYTES = 1_000_000
+MAX_IMPORT_ENTRIES = 300
 BACKUP_INTERVAL_SECONDS = 24 * 60 * 60
+MONTHS = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+WEEKDAYS = {
+    "mon",
+    "monday",
+    "tue",
+    "tues",
+    "tuesday",
+    "wed",
+    "wednesday",
+    "thu",
+    "thur",
+    "thurs",
+    "thursday",
+    "fri",
+    "friday",
+    "sat",
+    "saturday",
+    "sun",
+    "sunday",
+}
 ALLOWED_IMAGE_TYPES = {
     "image/gif": ".gif",
     "image/jpeg": ".jpg",
@@ -48,6 +95,7 @@ ALLOWED_TAGS = {
     "em",
     "h2",
     "h3",
+    "hr",
     "i",
     "img",
     "li",
@@ -186,6 +234,178 @@ def validate_date(value):
     except (TypeError, ValueError):
         raise ValueError("Invalid date")
     return value
+
+
+def expand_year(year):
+    value = int(year)
+    if value < 100:
+        return 2000 + value if value < 70 else 1900 + value
+    return value
+
+
+def valid_date_parts(year, month, day):
+    try:
+        return datetime(int(year), int(month), int(day)).strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def clean_import_date_line(line):
+    value = str(line or "").strip()
+    if not value:
+        return ""
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1].strip()
+    value = re.sub(r"^\s*(?:date\s*[:\-]\s*)", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", value, flags=re.IGNORECASE)
+    value = re.sub(r"[,\u2013\u2014]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    parts = value.split()
+    while parts and parts[0].lower().strip(".") in WEEKDAYS:
+        parts.pop(0)
+    return " ".join(parts)
+
+
+def parse_import_date(line, date_order="mdy"):
+    original = str(line or "").strip()
+    value = clean_import_date_line(original)
+    if not value:
+        return None
+
+    match = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", value)
+    if match:
+        parsed = valid_date_parts(match.group(1), match.group(2), match.group(3))
+        return {"date": parsed, "raw": original, "warning": ""} if parsed else None
+
+    match = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})", value)
+    if match:
+        first, second, year = match.groups()
+        year = expand_year(year)
+        first_int = int(first)
+        second_int = int(second)
+        warning = ""
+        if first_int > 12 and second_int <= 12:
+            month, day = second, first
+        elif second_int > 12 and first_int <= 12:
+            month, day = first, second
+        else:
+            if date_order == "dmy":
+                day, month = first, second
+                warning = "Ambiguous numeric date; interpreted as day/month/year."
+            else:
+                month, day = first, second
+                warning = "Ambiguous numeric date; interpreted as month/day/year."
+        parsed = valid_date_parts(year, month, day)
+        return {"date": parsed, "raw": original, "warning": warning} if parsed else None
+
+    tokens = value.split()
+    lowered = [token.lower().strip(".") for token in tokens]
+    month_index = next((index for index, token in enumerate(lowered) if token in MONTHS), None)
+    if month_index is not None:
+        month = MONTHS[lowered[month_index]]
+        numbers = [int(token) for token in re.findall(r"\b\d{1,4}\b", value)]
+        if len(numbers) >= 2:
+            year_candidates = [number for number in numbers if number > 31 or len(str(number)) == 4]
+            year = expand_year(year_candidates[-1] if year_candidates else numbers[-1])
+            day_candidates = [number for number in numbers if number != year and 1 <= number <= 31]
+            day = day_candidates[0] if day_candidates else None
+            if day:
+                parsed = valid_date_parts(year, month, day)
+                return {"date": parsed, "raw": original, "warning": ""} if parsed else None
+
+    try:
+        parsed = datetime.strptime(value, "%B %d %Y").strftime("%Y-%m-%d")
+        return {"date": parsed, "raw": original, "warning": ""}
+    except ValueError:
+        return None
+
+
+def parse_import_entries(raw_text, default_context="personal", date_order="mdy"):
+    text = str(raw_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if len(text.encode("utf-8")) > MAX_IMPORT_BYTES:
+        raise ValueError("Import text is too large")
+    context = normalize_context(default_context)
+    entries = []
+    current = None
+    leading = []
+
+    for line in text.split("\n"):
+        parsed = parse_import_date(line, date_order)
+        if parsed:
+            if current:
+                current["text"] = "\n".join(current.pop("lines")).strip()
+                entries.append(current)
+            elif leading and any(item.strip() for item in leading):
+                entries.append(
+                    {
+                        "id": f"unparsed-{len(entries) + 1}",
+                        "date": "",
+                        "rawDate": "",
+                        "text": "\n".join(leading).strip(),
+                        "context": context,
+                        "action": "skip",
+                        "hasExisting": False,
+                        "warning": "Text before the first date was not imported.",
+                    }
+                )
+            current = {
+                "id": f"entry-{len(entries) + 1}",
+                "date": parsed["date"],
+                "rawDate": parsed["raw"],
+                "lines": [],
+                "context": context,
+                "action": "append",
+                "hasExisting": False,
+                "warning": parsed["warning"],
+            }
+        elif current:
+            current["lines"].append(line)
+        else:
+            leading.append(line)
+
+    if current:
+        current["text"] = "\n".join(current.pop("lines")).strip()
+        entries.append(current)
+    elif leading and any(item.strip() for item in leading):
+        entries.append(
+            {
+                "id": "unparsed-1",
+                "date": "",
+                "rawDate": "",
+                "text": "\n".join(leading).strip(),
+                "context": context,
+                "action": "skip",
+                "hasExisting": False,
+                "warning": "No date lines were detected.",
+            }
+        )
+
+    cleaned = []
+    for entry in entries[:MAX_IMPORT_ENTRIES]:
+        entry["text"] = str(entry.get("text") or "").strip()
+        if not entry["text"] and entry.get("date"):
+            entry["warning"] = "Date detected with no note text."
+            entry["action"] = "skip"
+        cleaned.append(entry)
+    return cleaned
+
+
+def add_import_conflicts(entries):
+    dated = [(entry["date"], entry["context"]) for entry in entries if entry.get("date")]
+    if not dated:
+        return entries
+    with db() as conn:
+        for entry in entries:
+            if not entry.get("date"):
+                continue
+            row = conn.execute(
+                "SELECT length(trim(content)) AS content_length, length(trim(tags)) AS tag_length FROM notes WHERE note_date = ? AND context = ?",
+                (entry["date"], entry["context"]),
+            ).fetchone()
+            has_existing = bool(row and ((row["content_length"] or 0) > 0 or (row["tag_length"] or 0) > 0))
+            entry["hasExisting"] = has_existing
+            entry["action"] = "append" if has_existing else "replace"
+    return entries
 
 
 def note_to_markdown(row):
@@ -637,6 +857,14 @@ class JournalHandler(BaseHTTPRequestHandler):
                 user = self.require_user()
                 if user:
                     self.restore_backup()
+            elif path == "/api/import/preview":
+                user = self.require_user()
+                if user:
+                    self.preview_import(user)
+            elif path == "/api/import/commit":
+                user = self.require_user()
+                if user:
+                    self.commit_import(user)
             else:
                 self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -960,6 +1188,90 @@ class JournalHandler(BaseHTTPRequestHandler):
             return
         result = import_backup(raw)
         self.send_json({"ok": True, **result})
+
+    def preview_import(self, user):
+        payload = self.read_json()
+        context = normalize_context(payload.get("context", "personal"))
+        if not self.require_personal_access(user, context):
+            return
+        date_order = str(payload.get("dateOrder", "mdy")).lower()
+        if date_order not in {"mdy", "dmy"}:
+            raise ValueError("Invalid date preference")
+        entries = parse_import_entries(payload.get("text", ""), context, date_order)
+        add_import_conflicts(entries)
+        warnings = sum(1 for entry in entries if entry.get("warning"))
+        importable = sum(1 for entry in entries if entry.get("date") and entry.get("text"))
+        self.send_json({"entries": entries, "warnings": warnings, "importable": importable, "limit": MAX_IMPORT_ENTRIES})
+
+    def commit_import(self, user):
+        payload = self.read_json()
+        raw_entries = payload.get("entries")
+        if not isinstance(raw_entries, list):
+            raise ValueError("Import entries are required")
+        if len(raw_entries) > MAX_IMPORT_ENTRIES:
+            raise ValueError("Too many import entries")
+        actions = {"append", "replace", "skip"}
+        entries = []
+        needs_personal = False
+        for raw in raw_entries:
+            if not isinstance(raw, dict):
+                raise ValueError("Invalid import entry")
+            action = str(raw.get("action", "skip")).lower()
+            if action not in actions:
+                raise ValueError("Invalid import action")
+            if action == "skip":
+                continue
+            note_date = validate_date(raw.get("date"))
+            context = normalize_context(raw.get("context", "personal"))
+            if context == "personal":
+                needs_personal = True
+            text = str(raw.get("text", "")).strip()
+            if not text:
+                continue
+            entries.append({"date": note_date, "context": context, "text": text, "action": action})
+        if needs_personal and not self.require_personal_access(user, "personal"):
+            return
+        if not entries:
+            self.send_json({"ok": True, "imported": 0, "appended": 0, "replaced": 0, "skipped": len(raw_entries), "backup": None})
+            return
+        backup = write_server_backup()
+        updated_at = utc_now().isoformat()
+        imported = appended = replaced = 0
+        with db() as conn:
+            for entry in entries:
+                existing = conn.execute(
+                    "SELECT content FROM notes WHERE note_date = ? AND context = ?",
+                    (entry["date"], entry["context"]),
+                ).fetchone()
+                imported_html = sanitize_note(entry["text"])
+                if entry["action"] == "append" and existing and (existing["content"] or "").strip():
+                    divider = "<hr><p><strong>Imported note</strong></p>"
+                    content = f"{existing['content']}{divider}{imported_html}"
+                    appended += 1
+                else:
+                    content = imported_html
+                    replaced += 1
+                conn.execute(
+                    """
+                    INSERT INTO notes (note_date, context, content, tags, updated_at)
+                    VALUES (?, ?, ?, '', ?)
+                    ON CONFLICT(note_date, context) DO UPDATE SET
+                        content = excluded.content,
+                        updated_at = excluded.updated_at
+                    """,
+                    (entry["date"], entry["context"], content, updated_at),
+                )
+                imported += 1
+        self.send_json(
+            {
+                "ok": True,
+                "imported": imported,
+                "appended": appended,
+                "replaced": replaced,
+                "skipped": max(len(raw_entries) - imported, 0),
+                "backup": backup.name,
+            }
+        )
 
     def upload_asset(self):
         payload = self.read_json()
