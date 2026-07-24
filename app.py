@@ -201,6 +201,11 @@ def note_text(content):
     return parser.get_text()
 
 
+def word_count(content):
+    text = note_text(content or "")
+    return len(re.findall(r"\b[\w'-]+\b", text))
+
+
 def normalize_tags(tags):
     raw = tags if isinstance(tags, list) else str(tags or "").split(",")
     cleaned = []
@@ -983,10 +988,24 @@ class JournalHandler(BaseHTTPRequestHandler):
                 FROM notes
                 WHERE note_date < ? AND context = ? AND length(trim(content)) > 0
                 ORDER BY note_date DESC
-                LIMIT 60
+                LIMIT 500
                 """,
                 (current_day, context),
             ).fetchall()
+        older_notes = []
+        for index, row in enumerate(older):
+            expanded = index < 3
+            older_notes.append(
+                {
+                    "note_date": row["note_date"],
+                    "context": row["context"],
+                    "content": row["content"] if expanded else "",
+                    "tags": row["tags"] if expanded else "",
+                    "updated_at": row["updated_at"],
+                    "word_count": word_count(row["content"] or ""),
+                    "collapsed": not expanded,
+                }
+            )
         self.send_json(
             {
                 "appName": APP_NAME,
@@ -997,7 +1016,7 @@ class JournalHandler(BaseHTTPRequestHandler):
                     "tags": today["tags"] if today else "",
                     "updatedAt": today["updated_at"] if today else None,
                 },
-                "older": [dict(row) for row in older],
+                "older": older_notes,
             }
         )
 

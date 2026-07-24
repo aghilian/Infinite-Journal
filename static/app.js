@@ -256,6 +256,22 @@ function renderOlder(notes) {
   }
 
   for (const note of notes) {
+    if (note.collapsed) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "collapsed-note";
+      button.dataset.date = note.note_date;
+      button.dataset.context = note.context || activeContext;
+      const date = document.createElement("span");
+      date.textContent = formatDate(note.note_date);
+      const count = document.createElement("span");
+      const words = Number(note.word_count || 0);
+      count.textContent = `${words} ${words === 1 ? "word" : "words"}`;
+      button.append(date, count);
+      button.addEventListener("click", () => expandCollapsedNote(button));
+      olderNotes.append(button);
+      continue;
+    }
     const article = document.createElement("article");
     article.className = "note-card";
     const time = document.createElement("time");
@@ -269,6 +285,32 @@ function renderOlder(notes) {
     if (tags) article.append(tags);
     article.append(content);
     olderNotes.append(article);
+  }
+}
+
+async function expandCollapsedNote(button) {
+  button.disabled = true;
+  const noteDate = button.dataset.date;
+  const context = button.dataset.context || activeContext;
+  try {
+    const data = await api(`/api/note?date=${encodeURIComponent(noteDate)}&context=${encodeURIComponent(context)}`);
+    const note = data.note;
+    const article = document.createElement("article");
+    article.className = "note-card";
+    const time = document.createElement("time");
+    time.dateTime = note.note_date;
+    time.textContent = formatDate(note.note_date);
+    const tags = renderTags(note.tags || "");
+    const content = document.createElement("div");
+    content.className = "note-content";
+    content.innerHTML = normalizeStoredContent(note.content || "");
+    article.append(time);
+    if (tags) article.append(tags);
+    article.append(content);
+    button.replaceWith(article);
+  } catch (error) {
+    button.disabled = false;
+    button.querySelector("span:last-child").textContent = error.message;
   }
 }
 

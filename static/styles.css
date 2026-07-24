@@ -440,6 +440,31 @@ textarea {
   font-weight: 600;
 }
 
+.collapsed-note {
+  width: min(980px, 100%);
+  min-height: 44px;
+  margin: 0 auto 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.collapsed-note:hover {
+  background: var(--mode-panel);
+}
+
+.collapsed-note span:last-child {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;
