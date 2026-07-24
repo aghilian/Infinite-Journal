@@ -91,6 +91,7 @@ ALLOWED_TAGS = {
     "b",
     "blockquote",
     "br",
+    "details",
     "div",
     "em",
     "h2",
@@ -103,6 +104,7 @@ ALLOWED_TAGS = {
     "p",
     "s",
     "strong",
+    "summary",
     "u",
     "ul",
 }

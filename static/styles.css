@@ -411,6 +411,27 @@ textarea {
   border: 1px solid var(--line);
 }
 
+#todayEditor details,
+.note-content details {
+  margin: 0 0 1rem;
+  padding: 10px 14px;
+  border: 1px solid var(--mode-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--paper) 58%, transparent);
+}
+
+#todayEditor summary,
+.note-content summary {
+  cursor: pointer;
+  color: var(--accent-dark);
+  font-weight: 700;
+}
+
+#todayEditor details[open] summary,
+.note-content details[open] summary {
+  margin-bottom: 10px;
+}
+
 .history {
   padding: 40px clamp(18px, 5vw, 64px) 72px;
 }

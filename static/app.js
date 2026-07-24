@@ -12,6 +12,7 @@ const personalMode = document.querySelector("#personalMode");
 const workMode = document.querySelector("#workMode");
 const contextLabel = document.querySelector("#contextLabel");
 const toolbar = document.querySelector(".editor-toolbar");
+const collapseButton = document.querySelector("#collapseButton");
 const imageButton = document.querySelector("#imageButton");
 const imageInput = document.querySelector("#imageInput");
 const soundToggle = document.querySelector("#soundToggle");
@@ -504,6 +505,51 @@ function insertHtmlAtCursor(markup) {
   scheduleSave();
 }
 
+function selectionInsideEditor(selection) {
+  if (!selection || selection.rangeCount === 0) return false;
+  const range = selection.getRangeAt(0);
+  return todayEditor.contains(range.commonAncestorContainer);
+}
+
+function titleFromSelection(text) {
+  const words = text.trim().split(/\s+/).filter(Boolean).slice(0, 8);
+  return words.join(" ") || "Collapsed section";
+}
+
+function collapseSelectedSection() {
+  todayEditor.focus();
+  const selection = window.getSelection();
+  if (!selectionInsideEditor(selection) || selection.isCollapsed) {
+    saveState.textContent = "Select text to collapse";
+    return;
+  }
+  const range = selection.getRangeAt(0);
+  const selectedText = selection.toString();
+  const title = window.prompt("Section title", titleFromSelection(selectedText));
+  if (title === null) return;
+  const fragment = range.extractContents();
+  const details = document.createElement("details");
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = title.trim() || titleFromSelection(selectedText);
+  const body = document.createElement("div");
+  if ([...fragment.childNodes].some((node) => node.nodeType === Node.ELEMENT_NODE)) {
+    body.append(fragment);
+  } else {
+    const paragraph = document.createElement("p");
+    paragraph.append(fragment);
+    body.append(paragraph);
+  }
+  details.append(summary, body);
+  range.insertNode(details);
+  selection.removeAllRanges();
+  const nextRange = document.createRange();
+  nextRange.selectNodeContents(body);
+  nextRange.collapse(false);
+  selection.addRange(nextRange);
+  scheduleSave();
+}
+
 function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -582,6 +628,8 @@ toolbar.addEventListener("click", (event) => {
   if (!button) return;
   exec(button.dataset.command);
 });
+
+collapseButton.addEventListener("click", collapseSelectedSection);
 
 async function searchByTag(tag) {
   const data = await api(`/api/search?tag=${encodeURIComponent(tag)}&context=${encodeURIComponent(activeContext)}`);
