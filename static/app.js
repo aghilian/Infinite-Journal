@@ -51,6 +51,8 @@ let saving = false;
 let activeContext = localStorage.getItem("journalContext") || "personal";
 let soundMuted = localStorage.getItem("typewriterMuted") === "true";
 let audioContext = null;
+let keySoundBuffer = null;
+let keySoundPromise = null;
 let lastKeySoundAt = 0;
 let personalToken = "";
 let pinMode = "unlock";
@@ -69,6 +71,8 @@ const SOUND_KEYS = new Set([
   "Home",
   "End",
 ]);
+const KEY_SOUND_URL = "/static/typewriter-key.mp3?v=1";
+const KEY_SOUND_GAIN = 3.5;
 
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -209,23 +213,28 @@ async function playTypewriterSound(key) {
   if (audioContext.state === "suspended") {
     await audioContext.resume();
   }
-  const duration = 0.06;
-  const start = audioContext.currentTime;
-  const oscillator = audioContext.createOscillator();
+  const buffer = await loadKeySound();
+  const source = audioContext.createBufferSource();
   const gain = audioContext.createGain();
-  const filter = audioContext.createBiquadFilter();
-  oscillator.type = "square";
-  oscillator.frequency.value = 220 + Math.random() * 140;
-  filter.type = "lowpass";
-  filter.frequency.value = 1800;
-  gain.gain.setValueAtTime(0.0001, start);
-  gain.gain.exponentialRampToValueAtTime(0.28, start + 0.003);
-  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-  oscillator.connect(filter);
-  filter.connect(gain);
+  source.buffer = buffer;
+  gain.gain.value = KEY_SOUND_GAIN;
+  source.connect(gain);
   gain.connect(audioContext.destination);
-  oscillator.start(start);
-  oscillator.stop(start + duration);
+  source.start();
+}
+
+async function loadKeySound() {
+  if (keySoundBuffer) return keySoundBuffer;
+  if (!keySoundPromise) {
+    keySoundPromise = fetch(KEY_SOUND_URL)
+      .then((response) => {
+        if (!response.ok) throw new Error("Keyboard sound failed to load");
+        return response.arrayBuffer();
+      })
+      .then((data) => audioContext.decodeAudioData(data));
+  }
+  keySoundBuffer = await keySoundPromise;
+  return keySoundBuffer;
 }
 
 function renderOlder(notes) {
