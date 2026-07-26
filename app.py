@@ -61,6 +61,30 @@ MONTHS = {
     "dec": 12,
     "december": 12,
 }
+JALALI_MONTHS = {
+    "farvardin": 1,
+    "farvardīn": 1,
+    "ordibehesht": 2,
+    "ordibehešt": 2,
+    "ordibehisht": 2,
+    "khordad": 3,
+    "xordad": 3,
+    "tir": 4,
+    "mordad": 5,
+    "amordad": 5,
+    "shahrivar": 6,
+    "shahrīvar": 6,
+    "mehr": 7,
+    "aban": 8,
+    "ābān": 8,
+    "azar": 9,
+    "āzar": 9,
+    "dey": 10,
+    "day": 10,
+    "bahman": 11,
+    "esfand": 12,
+    "espand": 12,
+}
 WEEKDAYS = {
     "mon",
     "monday",
@@ -266,6 +290,70 @@ def valid_date_parts(year, month, day):
         return None
 
 
+def is_jalali_year(year):
+    return 1200 <= int(year) <= 1499
+
+
+def gregorian_year_from_jalali_year(jalali_year, gregorian_month, gregorian_day):
+    boundary = (int(gregorian_month), int(gregorian_day)) >= (3, 21)
+    return int(jalali_year) + (621 if boundary else 622)
+
+
+def jalali_to_gregorian(jy, jm, jd):
+    jy = int(jy) - 979
+    jm = int(jm) - 1
+    jd = int(jd) - 1
+    j_day_no = 365 * jy + jy // 33 * 8 + (jy % 33 + 3) // 4
+    for days in [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29][:jm]:
+        j_day_no += days
+    j_day_no += jd
+    g_day_no = j_day_no + 79
+    gy = 1600 + 400 * (g_day_no // 146097)
+    g_day_no %= 146097
+    leap = True
+    if g_day_no >= 36525:
+        g_day_no -= 1
+        gy += 100 * (g_day_no // 36524)
+        g_day_no %= 36524
+        if g_day_no >= 365:
+            g_day_no += 1
+        else:
+            leap = False
+    gy += 4 * (g_day_no // 1461)
+    g_day_no %= 1461
+    if g_day_no >= 366:
+        leap = False
+        g_day_no -= 1
+        gy += g_day_no // 365
+        g_day_no %= 365
+    days_in_month = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    gm = 0
+    while gm < 12 and g_day_no >= days_in_month[gm]:
+        g_day_no -= days_in_month[gm]
+        gm += 1
+    return valid_date_parts(gy, gm + 1, g_day_no + 1)
+
+
+def valid_jalali_date_parts(year, month, day):
+    year = int(year)
+    month = int(month)
+    day = int(day)
+    if month < 1 or month > 12:
+        return None
+    max_day = 31 if month <= 6 else 30 if month <= 11 else 29
+    if day < 1 or day > max_day:
+        return None
+    return jalali_to_gregorian(year, month, day)
+
+
+def number_near_token(tokens, index):
+    for offset in (1, -1, 2, -2):
+        position = index + offset
+        if 0 <= position < len(tokens) and re.fullmatch(r"\d{1,2}", tokens[position]):
+            return int(tokens[position])
+    return None
+
+
 def clean_import_date_line(line):
     value = str(line or "").strip()
     if not value:
@@ -287,10 +375,16 @@ def parse_import_date(line, date_order="mdy"):
     value = clean_import_date_line(original)
     if not value:
         return None
+    candidates = []
 
     match = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", value)
     if match:
-        parsed = valid_date_parts(match.group(1), match.group(2), match.group(3))
+        year, month, day = match.groups()
+        if is_jalali_year(year):
+            parsed = valid_jalali_date_parts(year, month, day)
+            if parsed:
+                return {"date": parsed, "raw": original, "warning": "Converted Shamsi date to Gregorian."}
+        parsed = valid_date_parts(year, month, day)
         return {"date": parsed, "raw": original, "warning": ""} if parsed else None
 
     match = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})", value)
@@ -311,15 +405,48 @@ def parse_import_date(line, date_order="mdy"):
             else:
                 month, day = first, second
                 warning = "Ambiguous numeric date; interpreted as month/day/year."
-        parsed = valid_date_parts(year, month, day)
+        if is_jalali_year(year):
+            parsed = valid_jalali_date_parts(year, month, day)
+            warning = "Converted Shamsi date to Gregorian."
+        else:
+            parsed = valid_date_parts(year, month, day)
         return {"date": parsed, "raw": original, "warning": warning} if parsed else None
 
     tokens = value.split()
     lowered = [token.lower().strip(".") for token in tokens]
+    numbers = [int(token) for token in re.findall(r"\b\d{1,4}\b", value)]
+    for index, token in enumerate(lowered):
+        if token in MONTHS:
+            month = MONTHS[token]
+            day = number_near_token(lowered, index) or next((number for number in numbers if 1 <= number <= 31), None)
+            gregorian_years = [number for number in numbers if 1500 <= number <= 2200]
+            jalali_years = [number for number in numbers if is_jalali_year(number)]
+            if day and gregorian_years:
+                parsed = valid_date_parts(gregorian_years[-1], month, day)
+                if parsed:
+                    candidates.append((3, parsed, ""))
+            if day and jalali_years:
+                gy = gregorian_year_from_jalali_year(jalali_years[-1], month, day)
+                parsed = valid_date_parts(gy, month, day)
+                if parsed:
+                    candidates.append((2, parsed, "Converted Shamsi year beside Gregorian month/day."))
+    for index, token in enumerate(lowered):
+        if token in JALALI_MONTHS:
+            month = JALALI_MONTHS[token]
+            day = number_near_token(lowered, index) or next((number for number in numbers if 1 <= number <= 31), None)
+            year = next((number for number in numbers if is_jalali_year(number)), None)
+            if day and year:
+                parsed = valid_jalali_date_parts(year, month, day)
+                if parsed:
+                    candidates.append((1, parsed, "Converted Shamsi date to Gregorian."))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        _, parsed, warning = candidates[0]
+        return {"date": parsed, "raw": original, "warning": warning}
+
     month_index = next((index for index, token in enumerate(lowered) if token in MONTHS), None)
     if month_index is not None:
         month = MONTHS[lowered[month_index]]
-        numbers = [int(token) for token in re.findall(r"\b\d{1,4}\b", value)]
         if len(numbers) >= 2:
             year_candidates = [number for number in numbers if number > 31 or len(str(number)) == 4]
             year = expand_year(year_candidates[-1] if year_candidates else numbers[-1])
@@ -422,6 +549,47 @@ def add_import_conflicts(entries):
             entry["hasExisting"] = has_existing
             entry["action"] = "append" if has_existing else "replace"
     return entries
+
+
+def migrate_shamsi_year_note_dates(conn):
+    rows = conn.execute(
+        """
+        SELECT note_date, context, content, tags, updated_at
+        FROM notes
+        WHERE substr(note_date, 1, 2) IN ('12', '13', '14')
+        ORDER BY note_date ASC
+        """
+    ).fetchall()
+    migrated = 0
+    for row in rows:
+        year, month, day = [int(part) for part in row["note_date"].split("-")]
+        if not is_jalali_year(year):
+            continue
+        new_year = gregorian_year_from_jalali_year(year, month, day)
+        new_date = f"{new_year:04d}-{month:02d}-{day:02d}"
+        if new_date == row["note_date"]:
+            continue
+        existing = conn.execute(
+            "SELECT content, tags FROM notes WHERE note_date = ? AND context = ?",
+            (new_date, row["context"]),
+        ).fetchone()
+        if existing:
+            divider = "<hr><p><strong>Migrated Shamsi-year note</strong></p>"
+            merged_content = f"{existing['content'] or ''}{divider}{row['content'] or ''}"
+            merged_tags = normalize_tags(", ".join(filter(None, [existing["tags"], row["tags"]])))
+            conn.execute(
+                "UPDATE notes SET content = ?, tags = ?, updated_at = ? WHERE note_date = ? AND context = ?",
+                (merged_content, merged_tags, utc_now().isoformat(), new_date, row["context"]),
+            )
+            conn.execute("DELETE FROM notes WHERE note_date = ? AND context = ?", (row["note_date"], row["context"]))
+        else:
+            conn.execute(
+                "UPDATE notes SET note_date = ?, updated_at = ? WHERE note_date = ? AND context = ?",
+                (new_date, utc_now().isoformat(), row["note_date"], row["context"]),
+            )
+        migrated += 1
+    if migrated:
+        print(f"migrated {migrated} Shamsi-year note dates")
 
 
 def note_to_markdown(row):
@@ -615,6 +783,7 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN pin_salt TEXT")
         if "pin_hash" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN pin_hash TEXT")
+        migrate_shamsi_year_note_dates(conn)
         user_count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
         if user_count == 0:
             username = os.environ.get("THEJOURNAL_USER", "admin")
